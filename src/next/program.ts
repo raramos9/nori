@@ -74,11 +74,15 @@ function compilerOptions({ root, memory }: { root: string; memory: MemoryFiles }
   };
 }
 
+// The bundled lib files never change within a process, and re-parsing them dominated repeated scans.
+const libFiles = new Map<string, ts.SourceFile>();
+
 // Tracked files come from memory so analysis sees exactly the content the source hash covers.
 export function createProgram({ root, files }: { root: string; files: readonly SourceFile[] }): ts.Program {
   const memory = memoryFiles({ root, files });
   const options = compilerOptions({ root, memory });
   const base = ts.createCompilerHost(options, true);
+  const libDir = dirname(ts.getDefaultLibFilePath(options));
   const host: ts.CompilerHost = {
     ...base,
     getCurrentDirectory: () => root,
@@ -88,8 +92,15 @@ export function createProgram({ root, files }: { root: string; files: readonly S
     realpath: (path) => (memory.has(path) ? path : (base.realpath?.(path) ?? path)),
     getSourceFile(fileName, languageVersion, onError, shouldCreate) {
       const text = memory.text(fileName);
-      if (text === undefined) return base.getSourceFile(fileName, languageVersion, onError, shouldCreate);
-      return ts.createSourceFile(fileName, text, languageVersion, true);
+      if (text !== undefined) return ts.createSourceFile(fileName, text, languageVersion, true);
+      if (dirname(fileName) !== libDir) return base.getSourceFile(fileName, languageVersion, onError, shouldCreate);
+      const key = `${fileName}\0${JSON.stringify(languageVersion)}`;
+      let lib = libFiles.get(key);
+      if (lib === undefined) {
+        lib = base.getSourceFile(fileName, languageVersion, onError, shouldCreate);
+        if (lib !== undefined) libFiles.set(key, lib);
+      }
+      return lib;
     },
   };
   const rootNames = files.filter((file) => isProgramFile(file.path)).map((file) => join(root, file.path));
