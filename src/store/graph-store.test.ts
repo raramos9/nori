@@ -18,6 +18,7 @@ import {
 import { GraphStore } from './graph-store.js';
 
 const rootPath = '/repo/web';
+const SOURCE_HASH = 'f'.repeat(64);
 const app = { id: applicationId({ rootPath }), rootPath, framework: 'next-app-router' } as const;
 
 function screenFor(route: string): Screen {
@@ -32,9 +33,10 @@ function defaultState(screen: Screen) {
 function build(commit: string): Build {
   const commitSha = parseCommitSha(commit.repeat(40));
   return {
-    id: buildId({ applicationId: app.id, commitSha, analyzerVersion: '1.0.0' }),
+    id: buildId({ applicationId: app.id, commitSha, sourceHash: SOURCE_HASH, analyzerVersion: '1.0.0' }),
     applicationId: app.id,
     commitSha,
+    sourceHash: SOURCE_HASH,
     branch: 'main',
     analyzerVersion: '1.0.0',
     createdAt: new Date('2026-01-01T00:00:00.000Z'),

@@ -56,6 +56,7 @@ export type Build = {
   readonly id: BuildId;
   readonly applicationId: ApplicationId;
   readonly commitSha: CommitSha;
+  readonly sourceHash: string;
   readonly branch: string | null;
   readonly analyzerVersion: string;
   readonly createdAt: Date;

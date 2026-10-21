@@ -4,6 +4,7 @@ import { parseCommitSha, parseRoutePattern } from './model.js';
 
 const app = applicationId({ rootPath: '/repo/web' });
 const sha = parseCommitSha('a'.repeat(40));
+const sourceHash = 'c'.repeat(64);
 const span = { file: 'app/page.tsx', start: { line: 1, column: 0 }, end: { line: 1, column: 9 } };
 
 describe('id derivation', () => {
@@ -22,9 +23,10 @@ describe('id derivation', () => {
     expect(a).toMatch(/^scr_[0-9a-f]{16}$/);
   });
 
-  it('keys builds on commit and analyzer version', () => {
-    const base = { applicationId: app, commitSha: sha, analyzerVersion: '1' };
+  it('keys builds on commit, source hash and analyzer version', () => {
+    const base = { applicationId: app, commitSha: sha, sourceHash, analyzerVersion: '1' };
     expect(buildId(base)).toBe(buildId({ ...base }));
+    expect(buildId(base)).not.toBe(buildId({ ...base, sourceHash: 'd'.repeat(64) }));
     expect(buildId(base)).not.toBe(buildId({ ...base, analyzerVersion: '2' }));
     expect(buildId(base)).not.toBe(buildId({ ...base, commitSha: parseCommitSha('b'.repeat(40)) }));
   });
@@ -46,7 +48,7 @@ describe('id derivation', () => {
   });
 
   it('keys evidence on build, span and extractor', () => {
-    const build = buildId({ applicationId: app, commitSha: sha, analyzerVersion: '1' });
+    const build = buildId({ applicationId: app, commitSha: sha, sourceHash, analyzerVersion: '1' });
     const base = { kind: 'static', buildId: build, span, extractor: 'link' } as const;
     expect(evidenceId(base)).toBe(evidenceId({ ...base }));
     expect(evidenceId(base)).not.toBe(evidenceId({ ...base, extractor: 'router' }));

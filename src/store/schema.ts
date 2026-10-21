@@ -11,6 +11,7 @@ export interface BuildsTable {
   id: string;
   application_id: string;
   commit_sha: string;
+  source_hash: string;
   branch: string | null;
   analyzer_version: string;
   created_at: string;
