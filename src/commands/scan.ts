@@ -1,4 +1,4 @@
-import { lstat, mkdir, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { NoriError } from '../errors.js';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -15,29 +15,25 @@ import type { Command } from './command.js';
 const STATE_DIR = '.nori';
 const DATABASE_FILE = 'graph.db';
 
-type EntryKind = 'missing' | 'directory' | 'file' | 'other';
-
-async function entryKind(path: string): Promise<EntryKind> {
+async function isDirectory(path: string): Promise<boolean | null> {
   try {
-    const stats = await lstat(path);
-    if (stats.isDirectory()) return 'directory';
-    return stats.isFile() ? 'file' : 'other';
+    return (await lstat(path)).isDirectory();
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return 'missing';
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
     throw error;
   }
 }
 
-// The scanned repo is untrusted, so a committed symlink at any of these paths must not redirect our writes.
+// The scanned repo is untrusted, so a committed symlink anywhere in .nori (including SQLite's
+// journal and WAL side files) must not redirect our writes.
 async function prepareStateDir(stateDir: string): Promise<void> {
-  const dirKind = await entryKind(stateDir);
-  if (dirKind === 'missing') await mkdir(stateDir);
-  else if (dirKind !== 'directory') throw new NoriError(`${stateDir} exists and is not a directory`);
+  const directory = await isDirectory(stateDir);
+  if (directory === null) await mkdir(stateDir);
+  else if (!directory) throw new NoriError(`${stateDir} exists and is not a directory`);
 
-  for (const name of ['.gitignore', DATABASE_FILE]) {
-    const kind = await entryKind(join(stateDir, name));
-    if (kind !== 'missing' && kind !== 'file') {
-      throw new NoriError(`${join(stateDir, name)} exists and is not a regular file`);
+  for (const entry of await readdir(stateDir, { withFileTypes: true })) {
+    if (!entry.isFile()) {
+      throw new NoriError(`${join(stateDir, entry.name)} is not a regular file; remove it and rescan`);
     }
   }
   await writeFile(join(stateDir, '.gitignore'), '*\n');
