@@ -1,0 +1,11 @@
+{
+  "picked": "2026-10-21",
+  "apps": [
+    { "repo": "medusajs/nextjs-starter-medusa", "commit": "9818886f06e493cb2249733d114d339aa216ef00", "root": "." },
+    { "repo": "umami-software/umami", "commit": "e92fdab99508a8ed05249f6c5f07e140deab79e1", "root": "." },
+    { "repo": "miurla/morphic", "commit": "1803668a5cbfbcdf8c0c84ac5f8dbefaff3d575c", "root": "." },
+    { "repo": "karakeep-app/karakeep", "commit": "5c72fa95807df2d7dd96f0c9ac52a536b5bf3cfc", "root": "apps/web" },
+    { "repo": "CapSoftware/Cap", "commit": "d16fd199bbe8bd2a1c52fb19bcb3d383e9a2ff61", "root": "apps/web" },
+    { "repo": "gitroomhq/postiz-app", "commit": "c06abc3d786b8f719ced5716ccc70dd8a7251a05", "root": "apps/frontend" }
+  ]
+}
