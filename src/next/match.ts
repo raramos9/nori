@@ -150,6 +150,7 @@ function relativeTo(source: MatchRoute, target: readonly TargetSegment[]): Targe
   const segments: TargetSegment[] = source.segments.map((segment) =>
     segment.kind === 'static' ? { kind: 'text', value: segment.value } : { kind: 'hole' },
   );
+  segments.pop();
   for (const segment of target) {
     if (segment.kind === 'text' && segment.value === '.') continue;
     if (segment.kind === 'text' && segment.value === '..') segments.pop();

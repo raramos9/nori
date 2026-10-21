@@ -171,8 +171,8 @@ describe('navigationIngestion', () => {
 
   it('resolves a relative link against the source screen', () => {
     expect(
-      edges({ 'app/a/[id]/page.tsx': pageWith("<Link href='./child' />"), 'app/a/[id]/child/page.tsx': PAGE }),
-    ).toEqual(['/a/[id] link /a/[id]/child']);
+      edges({ 'app/a/[id]/page.tsx': pageWith("<Link href='./' />"), 'app/a/page.tsx': PAGE }),
+    ).toEqual(['/a/[id] link /a']);
   });
 
   it("attributes a layout component's call to every screen under the layout", () => {

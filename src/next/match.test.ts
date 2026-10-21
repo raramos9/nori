@@ -117,13 +117,21 @@ describe('locale segment', () => {
 });
 
 describe('relative links', () => {
-  const nested = matcherFor(['app/a/[id]/page.tsx', 'app/a/[id]/child/page.tsx', 'app/a/b/page.tsx']);
-  const source = sourceFor(nested, '/a/[id]');
+  const nested = matcherFor([
+    'app/page.tsx',
+    'app/monitors/page.tsx',
+    'app/monitors/[id]/page.tsx',
+    'app/monitors/[id]/logs/page.tsx',
+  ]);
 
-  it('resolves against the source pattern', () => {
-    expect(resolve(nested, './child', source)).toEqual(screen('/a/[id]/child'));
-    expect(resolve(nested, 'child', source)).toEqual(screen('/a/[id]/child'));
-    expect(resolve(nested, '../b', source)).toEqual(screen('/a/b'));
+  it("resolves against the source URL's directory, as a browser does", () => {
+    const list = sourceFor(nested, '/monitors');
+    expect(resolve(nested, './monitors/*', list)).toEqual(screen('/monitors/[id]'));
+    expect(resolve(nested, 'monitors/*', list)).toEqual(screen('/monitors/[id]'));
+    const detail = sourceFor(nested, '/monitors/[id]');
+    expect(resolve(nested, './', detail)).toEqual(screen('/monitors'));
+    expect(resolve(nested, '../', detail)).toEqual(screen('/'));
+    expect(resolve(nested, './*/logs', detail)).toEqual(screen('/monitors/[id]/logs'));
   });
 
   it('is a dynamic expression without a source screen', () => {
