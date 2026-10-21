@@ -16,7 +16,8 @@
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
-    "kysely": "^0.29.7"
+    "kysely": "^0.29.7",
+    "typescript6": "npm:typescript@^6.0.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
