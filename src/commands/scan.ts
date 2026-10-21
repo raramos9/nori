@@ -1,4 +1,5 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, writeFile } from 'node:fs/promises';
+import { NoriError } from '../errors.js';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { applicationId, buildId } from '../graph/ids.js';
