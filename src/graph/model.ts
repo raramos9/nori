@@ -82,7 +82,12 @@ export type Trigger =
   | { readonly kind: 'router-replace' }
   | { readonly kind: 'redirect' };
 
-export const UNRESOLVED_REASONS = ['dynamic-expression', 'no-matching-route', 'runtime-only'] as const;
+export const UNRESOLVED_REASONS = [
+  'dynamic-expression',
+  'no-matching-route',
+  'ambiguous-route',
+  'runtime-only',
+] as const;
 export type UnresolvedReason = (typeof UNRESOLVED_REASONS)[number];
 
 export function isUnresolvedReason(value: string): value is UnresolvedReason {
