@@ -44,12 +44,7 @@ export const parseRoutePattern = brandParser<RoutePattern>('RoutePattern', (valu
 const COMMIT_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 export const parseCommitSha = brandParser<CommitSha>('CommitSha', (value) => COMMIT_SHA.test(value));
 
-export const FRAMEWORKS = ['next-app-router'] as const;
-export type Framework = (typeof FRAMEWORKS)[number];
-
-export function isFramework(value: string): value is Framework {
-  return FRAMEWORKS.some((framework) => framework === value);
-}
+export type Framework = 'next-app-router';
 
 export type Application = {
   readonly id: ApplicationId;
