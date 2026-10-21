@@ -205,6 +205,43 @@ describe('scan', () => {
   });
 });
 
+describe('scan navigation', () => {
+  function linkedFixture(): string {
+    const root = nextFixture();
+    write(root, {
+      'components/nav.tsx': "import Link from 'next/link';\nexport const Nav = () => <Link href='/about' />;\n",
+      'app/layout.tsx': "import { Nav } from '../components/nav';\nexport default Nav;\n",
+      'app/users/[id]/page.tsx': "declare function go(): string;\nexport default () => <a href={go()} />;\n",
+    });
+    git(root, 'add', '-A');
+    git(root, 'commit', '-q', '-m', 'links');
+    return root;
+  }
+
+  it('stores transitions with call-site evidence and is idempotent', async () => {
+    const root = linkedFixture();
+    const first = await scan({ path: root });
+    const afterFirst = countRows(root);
+    const second = await scan({ path: root });
+
+    expect(countRows(root)).toEqual(afterFirst);
+    expect(second).toEqual(first);
+    expect(afterFirst).toMatchObject({ transitions: 4, evidence: 6, observations: 8 });
+    expect(formatScan(first).split('\n').at(-1)).toBe('4 transitions (3 resolved, 1 unresolved)');
+    const spans = first.transitions.flatMap(({ observations }) => observations.map(({ evidence }) => evidence.span));
+    expect(spans).toContainEqual({
+      file: 'components/nav.tsx',
+      start: { line: 2, column: 32 },
+      end: { line: 2, column: 45 },
+    });
+    expect(spans).toContainEqual({
+      file: 'app/users/[id]/page.tsx',
+      start: { line: 2, column: 25 },
+      end: { line: 2, column: 36 },
+    });
+  });
+});
+
 describe('scan state directory', () => {
   it('refuses a .nori symlink instead of writing through it', async () => {
     const root = nextFixture();
@@ -237,7 +274,7 @@ describe('formatScan', () => {
     expect(lines[0]).toBe(
       `build ${graph.build.commitSha.slice(0, 7)} on main, sources ${graph.build.sourceHash.slice(0, 8)}`,
     );
-    expect(lines.slice(1)).toEqual([...EXPECTED_PATTERNS, '3 screens']);
+    expect(lines.slice(1)).toEqual([...EXPECTED_PATTERNS, '3 screens', '0 transitions (0 resolved, 0 unresolved)']);
   });
 });
 
@@ -289,7 +326,11 @@ describe('nori scan CLI', () => {
     const root = nextFixture();
     const result = runCli('scan', root);
     expect(result.status).toBe(0);
-    expect(result.stdout.trim().split('\n').slice(1)).toEqual([...EXPECTED_PATTERNS, '3 screens']);
+    expect(result.stdout.trim().split('\n').slice(1)).toEqual([
+      ...EXPECTED_PATTERNS,
+      '3 screens',
+      '0 transitions (0 resolved, 0 unresolved)',
+    ]);
     expect(result.stderr).toBe('');
   });
 

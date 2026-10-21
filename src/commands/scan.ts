@@ -3,8 +3,9 @@ import { NoriError } from '../errors.js';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { applicationId, buildId } from '../graph/ids.js';
-import type { Application, Build, BuildGraph } from '../graph/model.js';
+import type { Application, Build, BuildGraph, StaticIngestion } from '../graph/model.js';
 import { sourceHash } from '../graph/source-hash.js';
+import { navigationIngestion, type CallOutcome } from '../ingest/navigation.js';
 import { screensIngestion } from '../ingest/screens.js';
 import { discoverProject } from '../next/project.js';
 import { discoverRoutes } from '../next/routes.js';
@@ -39,13 +40,13 @@ async function prepareStateDir(stateDir: string): Promise<void> {
   await writeFile(join(stateDir, '.gitignore'), '*\n');
 }
 
-export async function scan({
-  path,
-  createdAt = new Date(),
-}: {
-  path: string;
-  createdAt?: Date;
-}): Promise<BuildGraph> {
+export type Analysis = {
+  readonly root: string;
+  readonly ingestion: StaticIngestion;
+  readonly outcomes: readonly CallOutcome[];
+};
+
+export async function analyze({ path, createdAt }: { path: string; createdAt: Date }): Promise<Analysis> {
   const project = await discoverProject({ path });
   const application: Application = {
     id: applicationId({ rootPath: project.root }),
@@ -73,33 +74,60 @@ export async function scan({
     appDir: project.appDir,
   });
 
-  const stateDir = join(project.root, STATE_DIR);
+  const screens = screensIngestion({ application, build, table });
+  const navigation = navigationIngestion({ application, build, root: project.root, files: project.files, table });
+  return {
+    root: project.root,
+    ingestion: {
+      ...screens,
+      transitions: navigation.transitions,
+      evidence: [...screens.evidence, ...navigation.evidence],
+      observations: [...screens.observations, ...navigation.observations],
+    },
+    outcomes: navigation.outcomes,
+  };
+}
+
+export async function scan({
+  path,
+  createdAt = new Date(),
+}: {
+  path: string;
+  createdAt?: Date;
+}): Promise<BuildGraph> {
+  const { root, ingestion } = await analyze({ path, createdAt });
+  const stateDir = join(root, STATE_DIR);
   await prepareStateDir(stateDir);
 
   const store = await GraphStore.open({ path: join(stateDir, DATABASE_FILE) });
   try {
-    await store.ingestStatic(screensIngestion({ application, build, table }));
-    const graph = await store.loadBuildGraph({ buildId: build.id });
-    if (graph === null) throw new Error(`Build ${build.id} was not found after ingestion`);
+    await store.ingestStatic(ingestion);
+    const graph = await store.loadBuildGraph({ buildId: ingestion.build.id });
+    if (graph === null) throw new Error(`Build ${ingestion.build.id} was not found after ingestion`);
     return graph;
   } finally {
     await store.close();
   }
 }
 
-export function formatScan({ build, screens }: BuildGraph): string {
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+export function formatScan({ build, screens, transitions }: BuildGraph): string {
   const patterns = screens.map(({ screen }) => screen.routePattern).sort();
   const branch = build.branch ?? 'detached HEAD';
-  const count = patterns.length === 1 ? '1 screen' : `${patterns.length} screens`;
+  const resolved = transitions.filter(({ transition }) => transition.target.kind === 'resolved').length;
   return [
     `build ${build.commitSha.slice(0, 7)} on ${branch}, sources ${build.sourceHash.slice(0, 8)}`,
     ...patterns,
-    count,
+    plural(patterns.length, 'screen'),
+    `${plural(transitions.length, 'transition')} (${resolved} resolved, ${transitions.length - resolved} unresolved)`,
   ].join('\n');
 }
 
 export const scanCommand: Command = {
-  summary: 'find the screens of a Next.js App Router project',
+  summary: 'find the screens and navigation of a Next.js App Router project',
   async run(argv) {
     const { positionals } = parseArgs({ args: [...argv], options: {}, allowPositionals: true, strict: true });
     if (positionals.length > 1) {
