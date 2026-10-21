@@ -2,13 +2,12 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { NoriError } from '../errors.js';
-import { applicationId } from '../graph/ids.js';
 import type { BuildGraph } from '../graph/model.js';
 import { startExplorerServer } from '../explorer/server.js';
 import { toExplorerGraph } from '../explorer/view.js';
 import { resolveRoot } from '../next/project.js';
 import type { Command } from './command.js';
-import { openStateStore, scan } from './scan.js';
+import { scan } from './scan.js';
 
 const UI_DIR = fileURLToPath(new URL('../ui', import.meta.url));
 
@@ -21,17 +20,11 @@ function parsePort(value: string | undefined): number {
   return port;
 }
 
-async function latestGraph({ path }: { path: string }): Promise<{ root: string; graph: BuildGraph }> {
+// Never read a stored build back: a scanned repo can ship a forged .nori/graph.db, so the served
+// graph is always the one this analysis just produced.
+export async function exploreGraph({ path }: { path: string }): Promise<{ root: string; graph: BuildGraph }> {
   const root = await resolveRoot(path);
-  const store = await openStateStore({ root });
-  let graph: BuildGraph | null = null;
-  try {
-    const build = await store.latestBuild({ applicationId: applicationId({ rootPath: root }) });
-    if (build !== null) graph = await store.loadBuildGraph({ buildId: build.id });
-  } finally {
-    await store.close();
-  }
-  return { root, graph: graph ?? (await scan({ path: root })) };
+  return { root, graph: await scan({ path: root }) };
 }
 
 function openBrowser(url: string): void {
@@ -64,7 +57,7 @@ export const exploreCommand: Command = {
     }
     const port = parsePort(values.port);
 
-    const { root, graph } = await latestGraph({ path: positionals[0] ?? process.cwd() });
+    const { root, graph } = await exploreGraph({ path: positionals[0] ?? process.cwd() });
     const view = toExplorerGraph({ root, graph });
     const server = await startExplorerServer({ graph: view, uiDir: UI_DIR, port });
     const { commitSha, branch } = view.build;

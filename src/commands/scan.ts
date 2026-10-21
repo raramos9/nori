@@ -88,7 +88,7 @@ export async function analyze({ path, createdAt }: { path: string; createdAt: Da
   };
 }
 
-export async function openStateStore({ root }: { root: string }): Promise<GraphStore> {
+async function openStateStore({ root }: { root: string }): Promise<GraphStore> {
   const stateDir = join(root, STATE_DIR);
   await prepareStateDir(stateDir);
   return GraphStore.open({ path: join(stateDir, DATABASE_FILE) });

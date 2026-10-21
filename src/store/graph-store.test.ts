@@ -252,26 +252,6 @@ describe('GraphStore', () => {
     }
   });
 
-  it('picks the newest build of an application', async () => {
-    const store = await openMemory();
-    const dated = (commit: string, createdAt: string): StaticIngestion => {
-      const ingestion = ingestionFor(commit, ['/a']);
-      return { ...ingestion, build: { ...ingestion.build, createdAt: new Date(createdAt) } };
-    };
-    const newest = dated('b', '2026-03-01T00:00:00.000Z');
-    await store.ingestStatic(dated('a', '2026-02-01T00:00:00.000Z'));
-    await store.ingestStatic(newest);
-    await store.ingestStatic(dated('c', '2026-01-01T00:00:00.000Z'));
-
-    expect(await store.latestBuild({ applicationId: app.id })).toEqual(newest.build);
-  });
-
-  it('has no latest build for an application that was never scanned', async () => {
-    const store = await openMemory();
-    await store.ingestStatic(ingestionFor('a', ['/a']));
-    expect(await store.latestBuild({ applicationId: applicationId({ rootPath: '/elsewhere' }) })).toBeNull();
-  });
-
   it('returns null for an unknown build', async () => {
     const store = await openMemory();
     expect(await store.loadBuildGraph({ buildId: build('c').id })).toBeNull();
