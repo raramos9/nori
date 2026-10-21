@@ -34,7 +34,7 @@ async function readFileIfPresent(path: string): Promise<Buffer | null> {
   }
 }
 
-async function resolveRoot(path: string): Promise<string> {
+export async function resolveRoot(path: string): Promise<string> {
   try {
     const root = await realpath(path);
     if (await isDirectory(root)) return root;
