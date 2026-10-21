@@ -14,7 +14,6 @@ import {
   parseStateId,
   parseTransitionId,
   type Application,
-  type ApplicationId,
   type Build,
   type BuildGraph,
   type BuildId,
@@ -377,18 +376,6 @@ export class GraphStore {
           .execute();
       }
     });
-  }
-
-  async latestBuild({ applicationId }: { applicationId: ApplicationId }): Promise<Build | null> {
-    const row = await this.db
-      .selectFrom('builds')
-      .selectAll()
-      .where('application_id', '=', applicationId)
-      .orderBy('created_at', 'desc')
-      .orderBy('id', 'desc')
-      .limit(1)
-      .executeTakeFirst();
-    return row === undefined ? null : parseBuild(row);
   }
 
   async loadBuildGraph({ buildId }: { buildId: BuildId }): Promise<BuildGraph | null> {
