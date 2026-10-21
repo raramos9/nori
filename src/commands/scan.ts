@@ -9,11 +9,39 @@ import { screensIngestion } from '../ingest/screens.js';
 import { discoverProject } from '../next/project.js';
 import { discoverRoutes } from '../next/routes.js';
 import { GraphStore } from '../store/graph-store.js';
-import { readVersion } from '../version.js';
+import { analyzerVersion as currentAnalyzerVersion } from '../version.js';
 import type { Command } from './command.js';
 
 const STATE_DIR = '.nori';
 const DATABASE_FILE = 'graph.db';
+
+type EntryKind = 'missing' | 'directory' | 'file' | 'other';
+
+async function entryKind(path: string): Promise<EntryKind> {
+  try {
+    const stats = await lstat(path);
+    if (stats.isDirectory()) return 'directory';
+    return stats.isFile() ? 'file' : 'other';
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return 'missing';
+    throw error;
+  }
+}
+
+// The scanned repo is untrusted, so a committed symlink at any of these paths must not redirect our writes.
+async function prepareStateDir(stateDir: string): Promise<void> {
+  const dirKind = await entryKind(stateDir);
+  if (dirKind === 'missing') await mkdir(stateDir);
+  else if (dirKind !== 'directory') throw new NoriError(`${stateDir} exists and is not a directory`);
+
+  for (const name of ['.gitignore', DATABASE_FILE]) {
+    const kind = await entryKind(join(stateDir, name));
+    if (kind !== 'missing' && kind !== 'file') {
+      throw new NoriError(`${join(stateDir, name)} exists and is not a regular file`);
+    }
+  }
+  await writeFile(join(stateDir, '.gitignore'), '*\n');
+}
 
 export async function scan({
   path,
@@ -28,7 +56,7 @@ export async function scan({
     rootPath: project.root,
     framework: 'next-app-router',
   };
-  const analyzerVersion = readVersion();
+  const analyzerVersion = currentAnalyzerVersion();
   const hash = sourceHash({ files: project.appFiles });
   const build: Build = {
     id: buildId({
@@ -50,8 +78,7 @@ export async function scan({
   });
 
   const stateDir = join(project.root, STATE_DIR);
-  await mkdir(stateDir, { recursive: true });
-  await writeFile(join(stateDir, '.gitignore'), '*\n');
+  await prepareStateDir(stateDir);
 
   const store = await GraphStore.open({ path: join(stateDir, DATABASE_FILE) });
   try {

@@ -1,6 +1,16 @@
 import Database from 'better-sqlite3';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -181,6 +191,30 @@ describe('scan', () => {
     const graph = await scan({ path: root });
     expect(graph.build.branch).toBeNull();
     expect(formatScan(graph).split('\n')[0]).toContain('detached HEAD');
+  });
+});
+
+describe('scan state directory', () => {
+  it('refuses a .nori symlink instead of writing through it', async () => {
+    const root = nextFixture();
+    const elsewhere = tempDir();
+    symlinkSync(elsewhere, join(root, '.nori'));
+
+    await expect(scan({ path: root })).rejects.toThrow(NoriError);
+    expect(readdirSync(elsewhere)).toEqual([]);
+  });
+
+  it('refuses symlinked files inside .nori', async () => {
+    for (const name of ['.gitignore', 'graph.db']) {
+      const root = nextFixture();
+      const target = join(tempDir(), 'victim');
+      writeFileSync(target, 'keep me');
+      mkdirSync(join(root, '.nori'));
+      symlinkSync(target, join(root, '.nori', name));
+
+      await expect(scan({ path: root })).rejects.toThrow(NoriError);
+      expect(readFileSync(target, 'utf8')).toBe('keep me');
+    }
   });
 });
 
