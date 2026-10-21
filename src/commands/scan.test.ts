@@ -205,7 +205,7 @@ describe('scan state directory', () => {
   });
 
   it('refuses symlinked files inside .nori', async () => {
-    for (const name of ['.gitignore', 'graph.db']) {
+    for (const name of ['.gitignore', 'graph.db', 'graph.db-journal', 'graph.db-wal']) {
       const root = nextFixture();
       const target = join(tempDir(), 'victim');
       writeFileSync(target, 'keep me');
