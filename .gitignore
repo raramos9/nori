@@ -1,4 +1,5 @@
 node_modules/
+dist/
 .claude/
 probe/repos/
 probe/out/rows*.json
