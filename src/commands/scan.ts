@@ -88,6 +88,12 @@ export async function analyze({ path, createdAt }: { path: string; createdAt: Da
   };
 }
 
+export async function openStateStore({ root }: { root: string }): Promise<GraphStore> {
+  const stateDir = join(root, STATE_DIR);
+  await prepareStateDir(stateDir);
+  return GraphStore.open({ path: join(stateDir, DATABASE_FILE) });
+}
+
 export async function scan({
   path,
   createdAt = new Date(),
@@ -96,10 +102,7 @@ export async function scan({
   createdAt?: Date;
 }): Promise<BuildGraph> {
   const { root, ingestion } = await analyze({ path, createdAt });
-  const stateDir = join(root, STATE_DIR);
-  await prepareStateDir(stateDir);
-
-  const store = await GraphStore.open({ path: join(stateDir, DATABASE_FILE) });
+  const store = await openStateStore({ root });
   try {
     await store.ingestStatic(ingestion);
     const graph = await store.loadBuildGraph({ buildId: ingestion.build.id });

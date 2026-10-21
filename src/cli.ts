@@ -2,10 +2,14 @@
 import { parseArgs } from 'node:util';
 import { errorCode, NoriError } from './errors.js';
 import type { Command } from './commands/command.js';
+import { exploreCommand } from './commands/explore.js';
 import { scanCommand } from './commands/scan.js';
 import { readVersion } from './version.js';
 
-const COMMANDS: ReadonlyMap<string, Command> = new Map([['scan', scanCommand]]);
+const COMMANDS: ReadonlyMap<string, Command> = new Map([
+  ['scan', scanCommand],
+  ['explore', exploreCommand],
+]);
 
 function help(): string {
   const width = Math.max(...[...COMMANDS.keys()].map((name) => name.length));
