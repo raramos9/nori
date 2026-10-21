@@ -1,0 +1,7 @@
+node_modules/
+.claude/
+probe/repos/
+probe/out/rows*.json
+.DS_Store
+probe/
+docs/prd.md
