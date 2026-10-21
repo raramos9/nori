@@ -96,6 +96,12 @@ describe('hostname folders', () => {
     expect(resolve(hosted, '/settings', source)).toEqual(screen('/admin.acme.com/settings'));
   });
 
+  it("never resolves to a route under another host than the source screen's", () => {
+    const matcher = matcherFor(['app/app.acme.com/page.tsx', 'app/admin.acme.com/login/page.tsx']);
+    const source = sourceFor(matcher, '/app.acme.com');
+    expect(resolve(matcher, '/login', source)).toEqual({ kind: 'unresolved', reason: 'no-matching-route' });
+  });
+
   it('reports a path served under several hosts as ambiguous without a host', () => {
     expect(resolve(hosted, '/settings')).toEqual({ kind: 'unresolved', reason: 'ambiguous-route' });
   });
