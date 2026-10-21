@@ -8,6 +8,7 @@ import {
   DEFAULT_STATE_KEY,
   parseCommitSha,
   parseRoutePattern,
+  UNRESOLVED_REASONS,
   type Build,
   type Evidence,
   type Observation,
@@ -191,6 +192,20 @@ describe('GraphStore', () => {
       expect(s.status).toBe('inferred');
     }
     for (const t of graph?.transitions ?? []) expect(t.status).toBe('inferred');
+  });
+
+  it('round-trips every unresolved reason', async () => {
+    const store = await openMemory();
+    const a = screenFor('/a');
+    const transitions = UNRESOLVED_REASONS.map((reason) =>
+      makeTransition(a, { kind: 'unresolved', reason, expression: `href-${reason}` }),
+    );
+    const input = withTransitions(ingestionFor('a', ['/a']), transitions);
+    await store.ingestStatic(input);
+
+    const graph = await store.loadBuildGraph({ buildId: input.build.id });
+    expect(graph?.transitions.map((t) => t.transition)).toEqual(expect.arrayContaining(transitions));
+    expect(graph?.transitions).toHaveLength(UNRESOLVED_REASONS.length);
   });
 
   it('keeps supporting and contradicting observations of one transition inspectable', async () => {
