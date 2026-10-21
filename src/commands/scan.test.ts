@@ -154,6 +154,17 @@ describe('scan', () => {
     expect(countRows(root)).toMatchObject({ builds: 2, screens: 3, evidence: 8 });
   });
 
+  it('gives an edit outside the app directory a new build', async () => {
+    const root = nextFixture();
+    write(root, { 'components/nav.tsx': 'export const Nav = () => null;\n' });
+    const before = await scan({ path: root });
+    write(root, { 'components/nav.tsx': 'export const Nav = () => null;\n// edited\n' });
+    const after = await scan({ path: root });
+
+    expect(after.build.id).not.toBe(before.build.id);
+    expect(after.build.sourceHash).not.toBe(before.build.sourceHash);
+  });
+
   it('picks up a new untracked page and ignores gitignored ones', async () => {
     const root = nextFixture();
     write(root, { '.gitignore': 'app/ignored/\n', 'app/new/page.tsx': PAGE, 'app/ignored/page.tsx': PAGE });

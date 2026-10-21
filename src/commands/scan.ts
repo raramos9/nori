@@ -53,7 +53,7 @@ export async function scan({
     framework: 'next-app-router',
   };
   const analyzerVersion = currentAnalyzerVersion();
-  const hash = sourceHash({ files: project.appFiles });
+  const hash = sourceHash({ files: project.files });
   const build: Build = {
     id: buildId({
       applicationId: application.id,
@@ -69,7 +69,7 @@ export async function scan({
     createdAt,
   };
   const table = discoverRoutes({
-    files: project.appFiles.map((file) => file.path),
+    files: project.files.map((file) => file.path),
     appDir: project.appDir,
   });
 
