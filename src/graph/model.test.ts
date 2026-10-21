@@ -28,7 +28,12 @@ describe('brand parsers', () => {
 describe('deriveEvidenceStatus', () => {
   it('infers from static evidence, including when contradicted', () => {
     const app = applicationId({ rootPath: '/r' });
-    const build = buildId({ applicationId: app, commitSha: parseCommitSha('a'.repeat(40)), analyzerVersion: '1' });
+    const build = buildId({
+      applicationId: app,
+      commitSha: parseCommitSha('a'.repeat(40)),
+      sourceHash: 'c'.repeat(64),
+      analyzerVersion: '1',
+    });
     const span = { file: 'a.tsx', start: { line: 1, column: 0 }, end: { line: 1, column: 1 } };
     const identity = { kind: 'static', buildId: build, span, extractor: 'x' } as const;
     const evidence = { ...identity, id: evidenceId(identity) };

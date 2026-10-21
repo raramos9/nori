@@ -15,6 +15,7 @@ const initial: Migration = {
       .addColumn('id', 'text', (c) => c.primaryKey())
       .addColumn('application_id', 'text', (c) => c.notNull().references('applications.id'))
       .addColumn('commit_sha', 'text', (c) => c.notNull())
+      .addColumn('source_hash', 'text', (c) => c.notNull())
       .addColumn('branch', 'text')
       .addColumn('analyzer_version', 'text', (c) => c.notNull())
       .addColumn('created_at', 'text', (c) => c.notNull())

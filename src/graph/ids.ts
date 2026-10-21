@@ -34,9 +34,12 @@ export function applicationId({ rootPath }: { rootPath: string }): ApplicationId
 export function buildId(args: {
   applicationId: ApplicationId;
   commitSha: CommitSha;
+  sourceHash: string;
   analyzerVersion: string;
 }): BuildId {
-  return parseBuildId(derive('bld', [args.applicationId, args.commitSha, args.analyzerVersion]));
+  return parseBuildId(
+    derive('bld', [args.applicationId, args.commitSha, args.sourceHash, args.analyzerVersion]),
+  );
 }
 
 export function screenId(args: {
