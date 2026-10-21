@@ -11,7 +11,7 @@ export type NextProject = {
   readonly appDir: AppDir;
   readonly commitSha: CommitSha;
   readonly branch: string | null;
-  readonly appFiles: readonly SourceFile[];
+  readonly files: readonly SourceFile[];
 };
 
 async function isDirectory(path: string): Promise<boolean> {
@@ -81,12 +81,10 @@ export async function discoverProject({ path }: { path: string }): Promise<NextP
   await assertInsideWorkTree({ root });
   const { commitSha, branch } = await readHead({ root });
 
-  const prefix = `${appDir}/`;
-  const appFiles: SourceFile[] = [];
+  const files: SourceFile[] = [];
   for (const file of await listFiles({ root })) {
-    if (!file.startsWith(prefix)) continue;
     const content = await readFileIfPresent(join(root, file));
-    if (content !== null) appFiles.push({ path: file, content });
+    if (content !== null) files.push({ path: file, content });
   }
-  return { root, appDir, commitSha, branch, appFiles };
+  return { root, appDir, commitSha, branch, files };
 }
