@@ -49,6 +49,21 @@ describe('screensByFile', () => {
     expect(graph['components/c.tsx']).toEqual(['/']);
   });
 
+  it('does not follow lazy imports stored in a lookup table', () => {
+    const graph = reach({
+      'app/page.tsx': "import { demos } from '../lib/demos';\nexport default demos;\n",
+      'lib/demos.ts':
+        "export const demos = {\n  a: React.lazy(async () => ({ default: (await import('./a')).A })),\n  b: () => import('./b'),\n};\nexport const list = [() => import('./c')];\n",
+      'lib/a.tsx': 'export const A = 1;\n',
+      'lib/b.tsx': 'export const B = 1;\n',
+      'lib/c.tsx': 'export const C = 1;\n',
+    });
+    expect(graph['lib/demos.ts']).toEqual(['/']);
+    expect(graph['lib/a.tsx']).toBeUndefined();
+    expect(graph['lib/b.tsx']).toBeUndefined();
+    expect(graph['lib/c.tsx']).toBeUndefined();
+  });
+
   it('does not follow type-only imports', () => {
     const graph = reach({
       'app/page.tsx': "import type { T } from '../lib/types';\nimport { type U } from '../lib/more';\nexport default 1;\n",
