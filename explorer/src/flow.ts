@@ -108,6 +108,28 @@ export function visibleGraph(graph: ExplorerGraph, filters: Filters): VisibleGra
   return { screens, links, ghosts, selfLoops };
 }
 
+export function focusGraph(visible: VisibleGraph, center: ScreenId): VisibleGraph | null {
+  if (!visible.screens.some(({ id }) => id === center)) return null;
+  const links = visible.links.filter(({ source, target }) => source === center || target === center);
+  const kept = new Set<ScreenId>([center]);
+  for (const { source, target } of links) {
+    kept.add(source);
+    kept.add(target);
+  }
+  const loops = visible.selfLoops.get(center);
+  return {
+    screens: visible.screens.filter(({ id }) => kept.has(id)),
+    links,
+    ghosts: visible.ghosts.filter(({ sourceScreenId }) => sourceScreenId === center),
+    selfLoops: loops === undefined ? new Map() : new Map([[center, loops]]),
+  };
+}
+
+export function walk(trail: readonly ScreenId[], id: ScreenId): ScreenId[] {
+  const at = trail.indexOf(id);
+  return at === -1 ? [...trail, id] : trail.slice(0, at + 1);
+}
+
 export function ghostId(screenId: ScreenId): string {
   return `ghost:${screenId}`;
 }

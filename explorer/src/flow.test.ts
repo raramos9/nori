@@ -8,7 +8,7 @@ import {
   type ScreenId,
 } from '../../src/graph/model.js';
 import type { ExplorerGraph, ExplorerScreen, ExplorerTarget, ExplorerTransition } from '../../src/explorer/view.js';
-import { indexGraph, matchingScreens, STATUSES, visibleGraph, type Filters } from './flow.js';
+import { focusGraph, indexGraph, matchingScreens, STATUSES, visibleGraph, walk, type Filters } from './flow.js';
 import { layoutGraph } from './layout.js';
 
 const hex = (n: number) => n.toString(16).padStart(16, '0');
@@ -103,5 +103,53 @@ describe('layoutGraph', () => {
     const boxes = [...layoutGraph(visibleGraph(graph, all)).values()];
     expect(boxes).toHaveLength(5);
     expect(new Set(boxes.map(({ x, y }) => `${x},${y}`)).size).toBe(boxes.length);
+  });
+});
+
+describe('focusGraph', () => {
+  const contact = screen(4, '/contact');
+  const faq = screen(5, '/faq');
+  const wide: ExplorerGraph = {
+    ...graph,
+    screens: [home, about, pricing, contact, faq],
+    transitions: [
+      ...graph.transitions,
+      transition(contact, to(about)),
+      transition(pricing, to(contact)),
+      transition(faq, to(faq)),
+      transition(faq, dynamic),
+    ],
+  };
+  const view = visibleGraph(wide, all);
+
+  it('keeps in and out neighbours but drops unrelated screens and links between neighbours', () => {
+    const focused = focusGraph(view, about.id);
+    expect(focused?.screens.map((s) => s.id)).toEqual([home.id, about.id, pricing.id, contact.id]);
+    expect(focused?.links.map((l) => [l.source, l.target])).toEqual([
+      [home.id, about.id],
+      [about.id, pricing.id],
+      [contact.id, about.id],
+    ]);
+  });
+
+  it('keeps only the center ghost and self-loops', () => {
+    const focused = focusGraph(view, home.id);
+    expect(focused?.ghosts.map((g) => g.sourceScreenId)).toEqual([home.id]);
+    expect([...(focused?.selfLoops.keys() ?? [])]).toEqual([home.id]);
+    expect(focusGraph(view, faq.id)?.screens.map((s) => s.id)).toEqual([faq.id]);
+  });
+
+  it('is null when the center is filtered out', () => {
+    const inferred = visibleGraph(wide, { ...all, statuses: new Set<EvidenceStatus>(['inferred']) });
+    expect(focusGraph(inferred, pricing.id)).toBeNull();
+  });
+});
+
+describe('walk', () => {
+  it('appends new screens, truncates on revisit, and ignores revisiting the center', () => {
+    const trail = walk(walk(walk([], home.id), about.id), pricing.id);
+    expect(trail).toEqual([home.id, about.id, pricing.id]);
+    expect(walk(trail, about.id)).toEqual([home.id, about.id]);
+    expect(walk(trail, pricing.id)).toEqual(trail);
   });
 });
