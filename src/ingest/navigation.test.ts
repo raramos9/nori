@@ -39,11 +39,11 @@ function state(pattern: string): StateId {
   return id;
 }
 
-function ingest(files: Readonly<Record<string, string>>) {
+function ingest(files: Readonly<Record<string, string>>, adapters = true) {
   const sources = memoryFiles(files);
   const table = discoverRoutes({ files: sources.map((file) => file.path), appDir: 'app' });
   for (const route of table.routes) state(route.pattern);
-  return navigationIngestion({ application, build, root: MEMORY_ROOT, files: sources, table });
+  return navigationIngestion({ application, build, root: MEMORY_ROOT, files: sources, table, adapters });
 }
 
 function edges(files: Readonly<Record<string, string>>): readonly string[] {
@@ -167,6 +167,19 @@ describe('navigationIngestion', () => {
         'app/[team]/settings/page.tsx': PAGE,
       }),
     ).toEqual(['/ link /[team]/settings']);
+  });
+
+  it('leaves a route-builder call unresolved with adapters off', () => {
+    const files = {
+      'app/page.tsx':
+        'declare function route(p: string, v: object): string;\n' +
+        pageWith("<Link href={route('/[team]/settings', {})} />"),
+      'app/[team]/settings/page.tsx': PAGE,
+    };
+    const classes = (adapters: boolean) =>
+      ingest(files, adapters).outcomes.flatMap(({ contexts }) => contexts.map(({ classification }) => classification.kind));
+    expect(classes(true)).toEqual(['resolved']);
+    expect(classes(false)).toEqual(['unresolved']);
   });
 
   it('resolves a relative link against the source screen', () => {

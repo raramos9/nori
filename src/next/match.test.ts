@@ -10,8 +10,8 @@ function template(path: string): PathTemplate {
   });
 }
 
-function matcherFor(files: readonly string[]): Matcher {
-  return createMatcher({ table: discoverRoutes({ files, appDir: 'app' }), files });
+function matcherFor(files: readonly string[], adapters = true): Matcher {
+  return createMatcher({ table: discoverRoutes({ files, appDir: 'app' }), files, adapters });
 }
 
 function sourceFor(matcher: Matcher, pattern: string): MatchRoute {
@@ -106,6 +106,15 @@ describe('hostname folders', () => {
     expect(resolve(hosted, '/settings')).toEqual({ kind: 'unresolved', reason: 'ambiguous-route' });
   });
 
+  it('keeps the host folder as a path segment with adapters off', () => {
+    const raw = matcherFor(['app/app.acme.com/settings/page.tsx'], false);
+    expect(resolve(raw, '/settings', sourceFor(raw, '/app.acme.com/settings'))).toEqual({
+      kind: 'unresolved',
+      reason: 'no-matching-route',
+    });
+    expect(resolve(raw, '/app.acme.com/settings')).toEqual(screen('/app.acme.com/settings'));
+  });
+
   it('treats a dotted folder with only a handler as a path, not a host', () => {
     const matcher = matcherFor(['app/page.tsx', 'app/rss.xml/route.ts']);
     expect(resolve(matcher, '/')).toEqual(screen('/'));
@@ -119,6 +128,21 @@ describe('locale segment', () => {
   it('matches with and without the locale prefix', () => {
     expect(resolve(localized, '/about')).toEqual(screen('/[locale]/about'));
     expect(resolve(localized, '/en/about')).toEqual(screen('/[locale]/about'));
+  });
+
+  it('requires the locale with adapters off', () => {
+    const raw = matcherFor(['app/[locale]/about/page.tsx'], false);
+    expect(resolve(raw, '/about')).toEqual({ kind: 'unresolved', reason: 'no-matching-route' });
+    expect(resolve(raw, '/en/about')).toEqual(screen('/[locale]/about'));
+  });
+
+  it('reads a bracketed segment as a hole only with adapters on', () => {
+    const files = ['app/acme/settings/page.tsx'];
+    expect(resolve(matcherFor(files), '/[team]/settings')).toEqual({ kind: 'unresolved', reason: 'ambiguous-route' });
+    expect(resolve(matcherFor(files, false), '/[team]/settings')).toEqual({
+      kind: 'unresolved',
+      reason: 'no-matching-route',
+    });
   });
 });
 

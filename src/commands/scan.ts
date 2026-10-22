@@ -46,7 +46,15 @@ export type Analysis = {
   readonly outcomes: readonly CallOutcome[];
 };
 
-export async function analyze({ path, createdAt }: { path: string; createdAt: Date }): Promise<Analysis> {
+export async function analyze({
+  path,
+  createdAt,
+  adapters = true,
+}: {
+  path: string;
+  createdAt: Date;
+  adapters?: boolean;
+}): Promise<Analysis> {
   const project = await discoverProject({ path });
   const application: Application = {
     id: applicationId({ rootPath: project.root }),
@@ -75,7 +83,14 @@ export async function analyze({ path, createdAt }: { path: string; createdAt: Da
   });
 
   const screens = screensIngestion({ application, build, table });
-  const navigation = navigationIngestion({ application, build, root: project.root, files: project.files, table });
+  const navigation = navigationIngestion({
+    application,
+    build,
+    root: project.root,
+    files: project.files,
+    table,
+    adapters,
+  });
   return {
     root: project.root,
     ingestion: {

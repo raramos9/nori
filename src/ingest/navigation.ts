@@ -78,17 +78,19 @@ export function navigationIngestion({
   root,
   files,
   table,
+  adapters,
 }: {
   application: Application;
   build: Build;
   root: string;
   files: readonly SourceFile[];
   table: RouteTable;
+  adapters: boolean;
 }): NavigationIngestion {
   const program = createProgram({ root, files });
-  const evaluate = createEvaluator(program);
+  const evaluate = createEvaluator(program, { adapters });
   const paths = files.map((file) => file.path);
-  const matcher = createMatcher({ table, files: paths });
+  const matcher = createMatcher({ table, files: paths, adapters });
   const reach = screensByFile({ program, root, table, files: paths });
   const pages = new Map<RoutePattern, MatchRoute>();
   for (const route of matcher.routes) {
