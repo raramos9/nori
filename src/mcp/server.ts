@@ -81,12 +81,12 @@ export function createMcpServer({ current, realRoot }: { current: () => Promise<
     'list_screens',
     {
       description:
-        'List every screen found in the analyzed Next.js app, sorted by route, with its evidence status and how many navigation transitions leave it. Start here, then call get_screen with a screen id.',
+        'List every screen found in the analyzed Next.js app, sorted by route, with its evidence status and how many navigation transitions leave it. Start here, then call get_screen with a screen id for its transitions and evidence sources.',
       annotations: READ_ONLY,
       outputSchema: {
         build: buildSchema,
         screens: z.array(
-          screenSchema.extend({
+          screenSchema.omit({ sources: true }).extend({
             outgoing: z.number().describe('Transitions leaving this screen'),
             unresolvedOutgoing: z
               .number()
@@ -108,7 +108,6 @@ export function createMcpServer({ current, realRoot }: { current: () => Promise<
               id: screen.id,
               route: screen.route,
               status: screen.status,
-              sources: screen.sources,
               outgoing: leaving.length,
               unresolvedOutgoing: leaving.filter(({ target }) => target.kind === 'unresolved').length,
             };
