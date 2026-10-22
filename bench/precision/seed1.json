@@ -545,8 +545,9 @@
    "file": "src/components/nav/nav-banner-checklist.tsx",
    "line": 99,
    "code": "<Link href={item.href}>{item.title}</Link>",
-   "verdict": "correct",
-   "why": "The sidebar checklist renders on every dashboard page. When the workspace has exactly one page, it links to `/status-pages/${onlyPage.id}/status-reports` (nav-banner-checklist.tsx:58-60), which is served by status-reports/(list)/page.tsx."
+   "verdict": "wrong-source",
+   "why": "Relabelled 2026-10-22: the source page only calls redirect()/permanentRedirect(), so its layouts never render. The sidebar checklist renders on every dashboard page. When the workspace has exactly one page, it links to `/status-pages/${onlyPage.id}/status-reports` (nav-banner-checklist.tsx:58-60), which is served by status-reports/(list)/page.tsx.",
+   "cause": "redirect-only-page"
   },
   {
    "id": "66ac5ea93174",
@@ -657,8 +658,9 @@
    "file": "src/components/sections/comparison-hero.tsx",
    "line": 61,
    "code": "<Link href=\"/pricing\">View pricing</Link>",
-   "verdict": "correct",
-   "why": "compare/[slug]/page.tsx:147 renders ComparisonPage, which renders ComparisonHero (comparison-page.tsx:32) containing the /pricing Link at comparison-hero.tsx:61; app/pricing/page.tsx exists."
+   "verdict": "wrong-target",
+   "why": "Relabelled 2026-10-22: the target /pricing only calls permanentRedirect(\"/updates/joining-ramp\"), so the user never lands on it. compare/[slug]/page.tsx:147 renders ComparisonPage, which renders ComparisonHero (comparison-page.tsx:32) containing the /pricing Link at comparison-hero.tsx:61; app/pricing/page.tsx exists.",
+   "cause": "redirect-only-page"
   },
   {
    "id": "821dc1ed05af",
@@ -1066,8 +1068,9 @@
    "file": "components/navigation/compute-paused-banner.tsx",
    "line": 34,
    "code": "href={routes.settings.billing({ workspaceSlug: workspace.slug })}",
-   "verdict": "correct",
-   "why": "ComputePausedBanner is mounted in (app)/layout.tsx above all pages, including projects/[projectId]/(project)/authorization. When deploySpendSuspended is set, it links to routes.settings.billing (compute-paused-banner.tsx:34)."
+   "verdict": "wrong-source",
+   "why": "Relabelled 2026-10-22: the source page only calls redirect()/permanentRedirect(), so its layouts never render. ComputePausedBanner is mounted in (app)/layout.tsx above all pages, including projects/[projectId]/(project)/authorization. When deploySpendSuspended is set, it links to routes.settings.billing (compute-paused-banner.tsx:34).",
+   "cause": "redirect-only-page"
   },
   {
    "id": "e126aad224d4",
@@ -1239,8 +1242,9 @@
    "file": "src/components/nav/nav-banner-checklist.tsx",
    "line": 99,
    "code": "<Link href={item.href}>{item.title}</Link>",
-   "verdict": "correct",
-   "why": "The checklist renders in the sidebar on /monitors/[id]. Its Create Notification item links to \"/notifications\" (nav-banner-checklist.tsx:65), and notifications/page.tsx exists."
+   "verdict": "wrong-source",
+   "why": "Relabelled 2026-10-22: the source page only calls redirect()/permanentRedirect(), so its layouts never render. The checklist renders in the sidebar on /monitors/[id]. Its Create Notification item links to \"/notifications\" (nav-banner-checklist.tsx:65), and notifications/page.tsx exists.",
+   "cause": "redirect-only-page"
   }
  ]
 }
