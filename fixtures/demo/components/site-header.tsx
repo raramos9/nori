@@ -20,6 +20,7 @@ export function SiteHeader() {
         ))}
       </nav>
       <div className="actions">
+        <Link href="/home">Open app</Link>
         <Link href="/login">Log in</Link>
         <Link href="/signup" className="button">
           Sign up

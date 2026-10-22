@@ -5,6 +5,7 @@
     "/dashboard",
     "/docs",
     "/docs/[...slug]",
+    "/home",
     "/login",
     "/pricing",
     "/projects",
@@ -22,6 +23,10 @@
     {
       "from": "/",
       "to": "/about"
+    },
+    {
+      "from": "/",
+      "to": "/dashboard"
     },
     {
       "from": "/",
@@ -50,6 +55,10 @@
     {
       "from": "/about",
       "to": "/about"
+    },
+    {
+      "from": "/about",
+      "to": "/dashboard"
     },
     {
       "from": "/about",
@@ -105,6 +114,10 @@
     },
     {
       "from": "/docs",
+      "to": "/dashboard"
+    },
+    {
+      "from": "/docs",
       "to": "/docs"
     },
     {
@@ -133,6 +146,10 @@
     },
     {
       "from": "/docs/[...slug]",
+      "to": "/dashboard"
+    },
+    {
+      "from": "/docs/[...slug]",
       "to": "/docs"
     },
     {
@@ -150,6 +167,10 @@
     {
       "from": "/docs/[...slug]",
       "to": "/signup"
+    },
+    {
+      "from": "/home",
+      "to": "/dashboard"
     },
     {
       "from": "/login",
@@ -170,6 +191,10 @@
     {
       "from": "/pricing",
       "to": "/about"
+    },
+    {
+      "from": "/pricing",
+      "to": "/dashboard"
     },
     {
       "from": "/pricing",

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MEMORY_ROOT, memoryFiles } from '../testing/memory-project.js';
 import { createProgram } from './program.js';
 import { screensByFile } from './reach.js';
+import { redirectOnlyPages } from './redirect-pages.js';
 import { discoverRoutes } from './routes.js';
 
 function reach(files: Readonly<Record<string, string>>): Record<string, string[]> {
@@ -9,7 +10,8 @@ function reach(files: Readonly<Record<string, string>>): Record<string, string[]
   const paths = sources.map((file) => file.path);
   const program = createProgram({ root: MEMORY_ROOT, files: sources });
   const table = discoverRoutes({ files: paths, appDir: 'app' });
-  const result = screensByFile({ program, root: MEMORY_ROOT, table, files: paths });
+  const redirectOnly = redirectOnlyPages({ program, root: MEMORY_ROOT, table });
+  const result = screensByFile({ program, root: MEMORY_ROOT, table, files: paths, redirectOnly });
   return Object.fromEntries([...result].map(([file, patterns]) => [file, [...patterns].sort()]));
 }
 
@@ -55,6 +57,20 @@ describe('screensByFile', () => {
     });
     expect(graph['lib/types.ts']).toBeUndefined();
     expect(graph['lib/more.ts']).toBeUndefined();
+  });
+
+  it('seeds a redirect-only screen from its page alone, still following its imports', () => {
+    const graph = reach({
+      'app/layout.tsx': "import { Nav } from '../components/nav';\nexport default Nav;\n",
+      'components/nav.tsx': 'export const Nav = () => null;\n',
+      'app/page.tsx': PAGE,
+      'app/old/page.tsx':
+        "import { redirect } from 'next/navigation';\nimport { go } from '../../lib/go';\nexport default function Page() { go(); redirect('/'); }\n",
+      'lib/go.ts': "import { redirect } from 'next/navigation';\nexport const go = () => redirect('/');\n",
+    });
+    expect(graph['components/nav.tsx']).toEqual(['/']);
+    expect(graph['app/layout.tsx']).toEqual(['/']);
+    expect(graph['lib/go.ts']).toEqual(['/old']);
   });
 
   it('leaves a file no screen renders unattributed', () => {
