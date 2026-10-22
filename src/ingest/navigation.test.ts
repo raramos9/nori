@@ -60,6 +60,8 @@ function edges(files: Readonly<Record<string, string>>): readonly string[] {
 
 const PAGE = 'export default function Page() { return null; }\n';
 const pageWith = (body: string) => `export default function Page() {\n  return ${body};\n}\n`;
+const redirectTo = (to: string) =>
+  `import { redirect } from 'next/navigation';\nexport default function Page() {\n  redirect(${to});\n}\n`;
 
 describe('navigationIngestion', () => {
   it('resolves a literal Link to the target screen', () => {
@@ -232,6 +234,60 @@ describe('navigationIngestion', () => {
       extractor: 'next-nav-ts',
       span: { file: 'app/page.tsx', start: { line: 2, column: 16 }, end: { line: 2, column: 24 } },
     });
+  });
+
+  it('forwards a link to a redirect-only screen to where it redirects', () => {
+    expect(
+      edges({
+        'app/layout.tsx': "import { Nav } from '../components/nav';\nexport default Nav;\n",
+        'components/nav.tsx': "export const Nav = () => <Link href='/new' />;\n",
+        'app/page.tsx': pageWith("<Link href='/old' />"),
+        'app/old/page.tsx': redirectTo("'/new'"),
+        'app/new/page.tsx': PAGE,
+      }),
+    ).toEqual(['/ link /new', '/new link /new', '/old redirect /new']);
+  });
+
+  it('keeps the edge to redirect-only screens that redirect to each other', () => {
+    expect(
+      edges({
+        'app/page.tsx': pageWith("<Link href='/a' />"),
+        'app/a/page.tsx': redirectTo("'/b'"),
+        'app/b/page.tsx': redirectTo("'/a'"),
+      }),
+    ).toEqual(['/ link /a', '/a redirect /b', '/b redirect /a']);
+  });
+
+  it('keeps the edge to a redirect-only screen whose redirect is unresolved', () => {
+    expect(
+      edges({
+        'app/page.tsx': pageWith("<Link href='/old' />"),
+        'app/old/page.tsx': 'declare const to: string;\n' + redirectTo('to'),
+      }),
+    ).toEqual(['/ link /old', '/old redirect unresolved dynamic-expression "to"']);
+  });
+
+  it('forwards through a chain of redirect-only screens', () => {
+    expect(
+      edges({
+        'app/page.tsx': pageWith("<Link href='/a' />"),
+        'app/a/page.tsx': redirectTo("'/b'"),
+        'app/b/page.tsx': redirectTo("'/c'"),
+        'app/c/page.tsx': PAGE,
+      }),
+    ).toEqual(['/ link /c', '/a redirect /c', '/b redirect /c']);
+  });
+
+  it('classifies a call to a redirect-only screen as it was written', () => {
+    const ingestion = ingest({
+      'app/page.tsx': pageWith("<Link href='/old' />"),
+      'app/old/page.tsx': redirectTo("'/new'"),
+      'app/new/page.tsx': PAGE,
+    });
+    expect(ingestion.outcomes.map((o) => o.contexts)).toEqual([
+      [{ source: '/', classification: { kind: 'resolved' } }],
+      [{ source: '/old', classification: { kind: 'resolved' } }],
+    ]);
   });
 
   it('makes no transition for a call no screen renders, and reports it', () => {

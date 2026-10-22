@@ -10,11 +10,13 @@ nori explore fixtures/demo
 
 | Measure | Value |
 | --- | --- |
-| Screens | 13 of 13 (route recall 100%) |
-| True edges | 73 |
-| Resolved by nori | 72 |
-| Transition precision | 72 / 72 (100%) |
-| Edge recall | 72 / 73 (98.6%) |
+| Screens | 14 of 14 (route recall 100%) |
+| True edges | 79 |
+| Resolved by nori | 78 |
+| Transition precision | 78 / 78 (100%) |
+| Edge recall | 78 / 79 (98.7%) |
+
+`/home` only redirects to `/dashboard`, so the header's "Open app" link is an edge to `/dashboard`, and `/home` shows none of the signed-in layout's links.
 
 The one missed edge is `/dashboard -> /settings/billing`: the activity feed links to `item.href`, which comes from a fetch.
 

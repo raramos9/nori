@@ -87,23 +87,27 @@ function wrappersOf(pageFile: string, appDir: string, tracked: ReadonlySet<strin
 }
 
 // A screen renders its page, every enclosing layout and template, and whatever those import.
+// A redirect-only screen never renders its wrappers, so it is seeded from its page files alone.
 export function screensByFile({
   program,
   root,
   table,
   files,
+  redirectOnly,
 }: {
   program: ts.Program;
   root: string;
   table: RouteTable;
   files: readonly string[];
+  redirectOnly: ReadonlySet<RoutePattern>;
 }): ReadonlyMap<string, ReadonlySet<RoutePattern>> {
   const tracked = new Set(files);
   const graph = importGraph({ program, root, tracked });
   const seeds = new Map<RoutePattern, string[]>();
   for (const route of table.routes) {
     if (route.kind !== 'page') continue;
-    const files = [route.file, ...wrappersOf(route.file, table.appDir, tracked)];
+    const wrappers = redirectOnly.has(route.pattern) ? [] : wrappersOf(route.file, table.appDir, tracked);
+    const files = [route.file, ...wrappers];
     const existing = seeds.get(route.pattern);
     if (existing === undefined) seeds.set(route.pattern, files);
     else existing.push(...files);

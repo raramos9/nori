@@ -14,7 +14,7 @@ const ROUTER_TRIGGERS: ReadonlyMap<string, Trigger> = new Map([
   ['push', { kind: 'router-push' }],
   ['replace', { kind: 'router-replace' }],
 ]);
-const REDIRECTS = new Set(['redirect', 'permanentRedirect']);
+export const REDIRECTS: ReadonlySet<string> = new Set(['redirect', 'permanentRedirect']);
 const LINK: Trigger = { kind: 'link' };
 const REDIRECT: Trigger = { kind: 'redirect' };
 
