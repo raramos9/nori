@@ -80,7 +80,18 @@ button { font: inherit; color: inherit; }
 }
 .search input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-.stage { position: relative; flex: 1; min-height: 0; }
+.stage { display: flex; flex: 1; min-height: 0; }
+.canvas { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.flow { position: relative; flex: 1; min-height: 0; }
+.crumbs {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; padding: 4px 12px;
+  background: var(--surface); border-bottom: 1px solid var(--rule); font-size: 12px;
+}
+.crumb { border: 0; background: none; padding: 1px 4px; border-radius: 4px; color: var(--inferred); cursor: pointer; }
+.crumb:hover { text-decoration: underline; }
+.crumb.current { color: var(--ink); font-weight: 600; cursor: default; background: var(--paper-2); }
+.crumb.current:hover { text-decoration: none; }
+.sep { color: var(--ink-3); }
 .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-2); pointer-events: none; }
 
 .react-flow { --xy-background-color: var(--paper); --xy-background-pattern-color: var(--rule); background: var(--paper); }
@@ -132,9 +143,8 @@ button { font: inherit; color: inherit; }
 .react-flow__arrowhead polyline { stroke: var(--ink-3); fill: var(--ink-3); }
 
 .panel {
-  position: absolute; top: 0; right: 0; bottom: 0; width: min(420px, 100%); z-index: 5;
+  flex: none; width: 420px;
   display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--rule);
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
 }
 .panel > header { display: flex; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--rule); }
 .panel h2 { margin: 2px 0 0; font-size: 14px; word-break: break-all; }
@@ -175,5 +185,6 @@ button { font: inherit; color: inherit; }
 
 @media (max-width: 720px) {
   .filters { margin-left: 0; }
-  .panel { width: 100%; top: 40%; border-left: 0; border-top: 1px solid var(--rule); }
+  .stage { flex-direction: column; }
+  .panel { width: 100%; height: 60%; border-left: 0; border-top: 1px solid var(--rule); }
 }

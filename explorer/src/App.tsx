@@ -10,18 +10,21 @@ import {
   type Edge,
   type Node,
 } from '@xyflow/react';
-import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type { ExplorerGraph } from '../../src/explorer/view.js';
 import type { EvidenceStatus, ScreenId } from '../../src/graph/model.js';
 import { fetchGraph } from './api.js';
 import {
   countTransitions,
+  focusGraph,
   ghostId,
   indexGraph,
   matchingScreens,
   STATUSES,
   visibleGraph,
+  walk,
   type Filters,
+  type GraphIndex,
   type Selection,
 } from './flow.js';
 import { GHOST_SIZE, layoutGraph, NODE_HEIGHT, screenWidth } from './layout.js';
@@ -103,19 +106,54 @@ function Header({ graph, filters, onFilters, query, onQuery, shown }: {
   );
 }
 
+function Breadcrumbs({ trail, screens, onAll, onCrumb }: {
+  trail: readonly ScreenId[];
+  screens: GraphIndex['screens'];
+  onAll: () => void;
+  onCrumb: (id: ScreenId) => void;
+}) {
+  return (
+    <nav className="crumbs" aria-label="Focus trail">
+      <button type="button" className="crumb" onClick={onAll}>All screens</button>
+      {trail.map((id, position) => {
+        const current = position === trail.length - 1;
+        return (
+          <Fragment key={id}>
+            <span className="sep" aria-hidden="true">›</span>
+            <button
+              type="button"
+              className={current ? 'crumb mono current' : 'crumb mono'}
+              aria-current={current ? 'location' : undefined}
+              onClick={() => onCrumb(id)}
+            >
+              {screens.get(id)?.route ?? id}
+            </button>
+          </Fragment>
+        );
+      })}
+    </nav>
+  );
+}
+
 function Explorer({ graph }: { graph: ExplorerGraph }) {
   const { fitView } = useReactFlow();
   const [filters, setFilters] = useState<Filters>({ statuses: new Set(STATUSES), showUnresolved: true });
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [trail, setTrail] = useState<readonly ScreenId[]>([]);
 
   const index = useMemo(() => indexGraph(graph), [graph]);
   const visible = useMemo(() => visibleGraph(graph, filters), [graph, filters]);
-  const boxes = useMemo(() => layoutGraph(visible), [visible]);
-  const matches = useMemo(() => matchingScreens(visible.screens, deferredQuery), [visible, deferredQuery]);
-  const linkById = useMemo(() => new Map(visible.links.map((link) => [link.id, link])), [visible]);
-  const ghostById = useMemo(() => new Map(visible.ghosts.map((ghost) => [ghost.id, ghost])), [visible]);
+  const center = trail.at(-1);
+  const rendered = useMemo(
+    () => (center === undefined ? visible : (focusGraph(visible, center) ?? visible)),
+    [visible, center],
+  );
+  const boxes = useMemo(() => layoutGraph(rendered), [rendered]);
+  const matches = useMemo(() => matchingScreens(rendered.screens, deferredQuery), [rendered, deferredQuery]);
+  const linkById = useMemo(() => new Map(rendered.links.map((link) => [link.id, link])), [rendered]);
+  const ghostById = useMemo(() => new Map(rendered.ghosts.map((ghost) => [ghost.id, ghost])), [rendered]);
 
   const searching = matches.size > 0;
   const focus = useMemo((): ReadonlySet<string> => {
@@ -140,7 +178,7 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
 
   const nodes = useMemo((): Node[] => {
     const result: Node[] = [];
-    for (const screen of visible.screens) {
+    for (const screen of rendered.screens) {
       const box = boxes.get(screen.id);
       if (box === undefined) continue;
       const node: ScreenNodeType = {
@@ -153,14 +191,14 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
         data: {
           route: screen.route,
           status: screen.status,
-          selfLoops: visible.selfLoops.get(screen.id)?.length ?? 0,
+          selfLoops: rendered.selfLoops.get(screen.id)?.length ?? 0,
           dim: searching && !matches.has(screen.id),
           match: searching && matches.has(screen.id),
         },
       };
       result.push(node);
     }
-    for (const ghost of visible.ghosts) {
+    for (const ghost of rendered.ghosts) {
       const box = boxes.get(ghost.id);
       if (box === undefined) continue;
       const node: GhostNodeType = {
@@ -175,10 +213,11 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
       result.push(node);
     }
     return result;
-  }, [visible, boxes, selection, searching, matches]);
+  }, [rendered, boxes, selection, searching, matches]);
 
   const edges = useMemo((): Edge[] => {
-    const emphasised = (source: string, target: string) => focus.size > 0 && focus.has(source) && focus.has(target);
+    const emphasised = (source: string, target: string) =>
+      selection?.kind === 'screen' ? source === selection.id || target === selection.id : focus.has(source) && focus.has(target);
     const classFor = (base: string, source: string, target: string, dimmed: boolean) => {
       const classes = [base];
       if (emphasised(source, target)) classes.push('emphasis');
@@ -186,7 +225,7 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
       return classes.join(' ');
     };
     const result: Edge[] = [];
-    for (const link of visible.links) {
+    for (const link of rendered.links) {
       const count = link.transitions.length;
       result.push({
         id: link.id,
@@ -199,7 +238,7 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
         interactionWidth: 16,
       });
     }
-    for (const ghost of visible.ghosts) {
+    for (const ghost of rendered.ghosts) {
       const count = ghost.transitions.length;
       result.push({
         id: `edge:${ghost.id}`,
@@ -213,11 +252,23 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
       });
     }
     return result;
-  }, [visible, selection, focus, searching, matches]);
+  }, [rendered, selection, focus, searching, matches]);
 
+  const flowRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const frame = requestAnimationFrame(() => void fitView({ duration: 0, padding: 0.12 }));
-    return () => cancelAnimationFrame(frame);
+    const element = flowRef.current;
+    if (element === null) return;
+    let frame = 0;
+    // React Flow measures its pane in its own ResizeObserver; fitting earlier uses the old size.
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => void fitView({ duration: 0, padding: 0.12 }));
+    });
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
   }, [boxes, fitView]);
 
   useEffect(() => {
@@ -228,7 +279,9 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSelection(null);
+      if (event.key !== 'Escape') return;
+      setSelection(null);
+      setTrail([]);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -236,7 +289,7 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
 
   const selectScreen = (id: ScreenId) => {
     setSelection({ kind: 'screen', id });
-    void fitView({ nodes: [{ id }], duration: 300, maxZoom: 1.1, padding: 1.5 });
+    setTrail((current) => walk(current, id));
   };
 
   return (
@@ -247,39 +300,51 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
         onFilters={setFilters}
         query={query}
         onQuery={setQuery}
-        shown={{ screens: visible.screens.length, matches: matches.size }}
+        shown={{ screens: rendered.screens.length, matches: matches.size }}
       />
       <div className="stage">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={NODE_TYPES}
-          minZoom={0.02}
-          maxZoom={2}
-          nodesConnectable={false}
-          nodesDraggable={false}
-          elementsSelectable
-          onlyRenderVisibleElements
-          proOptions={{ hideAttribution: true }}
-          onNodeClick={(_, node) => {
-            const screen = visible.screens.find(({ id }) => id === node.id);
-            if (screen !== undefined) setSelection({ kind: 'screen', id: screen.id });
-            else if (ghostById.has(node.id)) setSelection({ kind: 'ghost', id: node.id });
-          }}
-          onEdgeClick={(_, edge) =>
-            setSelection(
-              edge.id.startsWith('edge:')
-                ? { kind: 'ghost', id: edge.id.slice('edge:'.length) }
-                : { kind: 'link', id: edge.id },
-            )
-          }
-          onPaneClick={() => setSelection(null)}
-        >
-          <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} />
-          <Controls showInteractive={false} />
-          <MiniMap pannable zoomable nodeClassName={miniMapClass} />
-        </ReactFlow>
-        {visible.screens.length === 0 ? <div className="empty">Nothing matches the current filters.</div> : null}
+        <div className="canvas">
+          {trail.length > 0 ? (
+            <Breadcrumbs
+              trail={trail}
+              screens={index.screens}
+              onAll={() => setTrail([])}
+              onCrumb={selectScreen}
+            />
+          ) : null}
+          <div className="flow" ref={flowRef}>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={NODE_TYPES}
+              minZoom={0.02}
+              maxZoom={2}
+              nodesConnectable={false}
+              nodesDraggable={false}
+              elementsSelectable
+              onlyRenderVisibleElements
+              proOptions={{ hideAttribution: true }}
+              onNodeClick={(_, node) => {
+                const screen = rendered.screens.find(({ id }) => id === node.id);
+                if (screen !== undefined) selectScreen(screen.id);
+                else if (ghostById.has(node.id)) setSelection({ kind: 'ghost', id: node.id });
+              }}
+              onEdgeClick={(_, edge) =>
+                setSelection(
+                  edge.id.startsWith('edge:')
+                    ? { kind: 'ghost', id: edge.id.slice('edge:'.length) }
+                    : { kind: 'link', id: edge.id },
+                )
+              }
+              onPaneClick={() => setSelection(null)}
+            >
+              <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} />
+              <Controls showInteractive={false} />
+              <MiniMap pannable zoomable nodeClassName={miniMapClass} />
+            </ReactFlow>
+            {visible.screens.length === 0 ? <div className="empty">Nothing matches the current filters.</div> : null}
+          </div>
+        </div>
         {selection !== null ? (
           <SidePanel
             graph={graph}
