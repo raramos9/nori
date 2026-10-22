@@ -16,9 +16,11 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p explorer/tsconfig.json"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "better-sqlite3": "^13.0.3",
     "kysely": "^0.29.7",
-    "typescript6": "npm:typescript@^6.0.3"
+    "typescript6": "npm:typescript@^6.0.3",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@dagrejs/dagre": "3.1.1",
