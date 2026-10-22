@@ -23,7 +23,8 @@ export function layoutGraph(graph: VisibleGraph): ReadonlyMap<string, Box> {
   for (const screen of graph.screens) {
     g.setNode(screen.id, { width: screenWidth(screen.route), height: NODE_HEIGHT });
   }
-  for (const ghost of graph.ghosts) g.setNode(ghost.id, GHOST_SIZE);
+  // dagre writes x and y onto the label object, so each node needs its own.
+  for (const ghost of graph.ghosts) g.setNode(ghost.id, { ...GHOST_SIZE });
   for (const link of graph.links) g.setEdge(link.source, link.target);
   for (const ghost of graph.ghosts) g.setEdge(ghost.sourceScreenId, ghostId(ghost.sourceScreenId));
 
