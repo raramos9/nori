@@ -37,12 +37,12 @@ NODE_OPTIONS=--max-old-space-size=8192 pnpm exec tsx bench/precision.ts --out sa
 
 An edge is one source screen, one call site and one target screen, so a link in a shared layout counts once per screen it renders on. Each row has a stable `id`, the source and target patterns, the trigger, and the call's file, line and code. Only tuning apps are sampled; the held-out set stays unread.
 
-`precision/seed1.json` is the first labelled sample (100 edges, seed 1, labelled 2026-10-22). Each edge carries a `verdict` (`correct`, `wrong-source`, `wrong-target`, `unclear`) with the evidence, and wrong edges carry a `cause`. Precision was 60 of 98 decided edges (61%).
+`precision/seed1.json` is the first labelled sample (100 edges, seed 1, labelled 2026-10-22). Each edge carries a `verdict` (`correct`, `wrong-source`, `wrong-target`, `unclear`) with the evidence, and wrong edges carry a `cause`. The judges first reported 60 of 98 correct; four of those edges start or end on a page that only redirects, so the corrected baseline is 56 of 98 (57%). After redirect-only pages became pass-throughs, 10 sampled edges disappeared and 56 of the remaining 88 decided edges are correct (64%).
 
 | Cause | Edges | Fixable from source |
 | --- | --- | --- |
 | `runtime-guard`: the call only runs under state the screen never has | 15 | No |
-| `redirect-only-page`: the source or target page only calls `redirect()` | 8 | Yes |
+| `redirect-only-page`: the source or target page only calls `redirect()` | 12 | Yes; 8 fixed, 4 inbox-zero pages redirect through a helper |
 | `import-over-attribution`: a server-action file or lazy registry credits every importer | 7 | Yes |
 | `per-screen-prop`: a prop set differently per screen switches the call or its value | 4 | Hard |
 | `hole-into-catch-all`: a mostly unknown path lands on a root catch-all | 3 | Yes |
