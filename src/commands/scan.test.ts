@@ -196,6 +196,18 @@ describe('scan', () => {
     expect(existsSync(join(web, '.nori', 'graph.db'))).toBe(true);
   });
 
+  it('accepts next declared in a workspace root manifest', async () => {
+    const repo = tempDir();
+    write(repo, { 'package.json': JSON.stringify({ private: true, dependencies: { next: '16.0.0' } }) });
+    const web = join(repo, 'apps', 'web');
+    write(web, { 'package.json': JSON.stringify({ name: 'web' }), 'app/page.tsx': PAGE });
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'fixture');
+    const graph = await scan({ path: web });
+    expect(graph.screens.map(({ screen }) => screen.routePattern)).toEqual(['/']);
+  });
+
   it('reports a detached HEAD without a branch', async () => {
     const root = nextFixture();
     git(root, 'checkout', '-q', '--detach');
@@ -285,6 +297,18 @@ describe('scan failures', () => {
       (error: unknown) => error,
     );
   }
+
+  it('does not look for next above the repository root', async () => {
+    const outer = tempDir();
+    write(outer, { 'package.json': NEXT_MANIFEST });
+    const repo = join(outer, 'repo');
+    write(repo, { 'package.json': JSON.stringify({ name: 'web' }), 'app/page.tsx': PAGE });
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'fixture');
+    const error = await failure(repo);
+    expect(error).toHaveProperty('message', expect.stringMatching(/does not list next/));
+  });
 
   it('names each missing prerequisite', async () => {
     const missingManifest = tempDir();
