@@ -2,8 +2,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { readVersion } from '../version.js';
-import { readSnippet, sourceIndex } from '../explorer/source.js';
-import type { ExplorerGraph, ExplorerScreen, ExplorerTransition } from '../explorer/view.js';
+import { readSnippet } from '../explorer/source.js';
+import type { ExplorerTransition } from '../explorer/view.js';
+import type { Served } from './live.js';
+import type { GraphIndex } from './snapshot.js';
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
 
@@ -14,6 +16,12 @@ const buildSchema = z.object({
   commitSha: z.string(),
   branch: z.string().nullable(),
   analyzerVersion: z.string(),
+  refreshError: z
+    .string()
+    .nullable()
+    .describe(
+      'Set when re-analysing after a source change failed; the graph is from the last successful analysis',
+    ),
 });
 
 const sourceSchema = z.object({
@@ -51,35 +59,20 @@ function toolError(message: string): CallToolResult {
   return { isError: true, content: [{ type: 'text', text: message }] };
 }
 
-export function createMcpServer({ graph, realRoot }: { graph: ExplorerGraph; realRoot: string }): McpServer {
-  const { build } = graph;
-  const buildInfo = {
-    id: build.id,
-    commitSha: build.commitSha,
-    branch: build.branch,
-    analyzerVersion: build.analyzerVersion,
-  };
-
-  const screens = new Map<string, ExplorerScreen>(graph.screens.map((screen) => [screen.id, screen]));
-  const outgoing = new Map<string, ExplorerTransition[]>();
-  const incoming = new Map<string, ExplorerTransition[]>();
-  const push = (index: Map<string, ExplorerTransition[]>, key: string, transition: ExplorerTransition) => {
-    const list = index.get(key);
-    if (list === undefined) index.set(key, [transition]);
-    else list.push(transition);
-  };
-  for (const transition of graph.transitions) {
-    push(outgoing, transition.sourceScreenId, transition);
-    if (transition.target.kind === 'screen') push(incoming, transition.target.screenId, transition);
-  }
-  const sources = sourceIndex(graph);
-
-  const routeOf = (id: string): string => screens.get(id)?.route ?? '';
+export function createMcpServer({ current, realRoot }: { current: () => Promise<Served>; realRoot: string }): McpServer {
+  const routeOf = (index: GraphIndex, id: string): string => index.screens.get(id)?.route ?? '';
   const describe = (transition: ExplorerTransition) => ({
     id: transition.id,
     trigger: transition.trigger,
     status: transition.status,
     sources: transition.sources,
+  });
+  const buildInfo = ({ snapshot, refreshError }: Served) => ({
+    id: snapshot.graph.build.id,
+    commitSha: snapshot.graph.build.commitSha,
+    branch: snapshot.graph.build.branch,
+    analyzerVersion: snapshot.graph.build.analyzerVersion,
+    refreshError,
   });
 
   const server = new McpServer({ name: 'nori', version: readVersion() });
@@ -102,13 +95,15 @@ export function createMcpServer({ graph, realRoot }: { graph: ExplorerGraph; rea
         ),
       },
     },
-    () =>
-      respond({
-        build: buildInfo,
+    async () => {
+      const served = await current();
+      const { graph, index } = served.snapshot;
+      return respond({
+        build: buildInfo(served),
         screens: [...graph.screens]
           .sort((a, b) => (a.route < b.route ? -1 : a.route > b.route ? 1 : 0))
           .map((screen) => {
-            const leaving = outgoing.get(screen.id) ?? [];
+            const leaving = index.outgoing.get(screen.id) ?? [];
             return {
               id: screen.id,
               route: screen.route,
@@ -118,7 +113,8 @@ export function createMcpServer({ graph, realRoot }: { graph: ExplorerGraph; rea
               unresolvedOutgoing: leaving.filter(({ target }) => target.kind === 'unresolved').length,
             };
           }),
-      }),
+      });
+    },
   );
 
   server.registerTool(
@@ -137,23 +133,25 @@ export function createMcpServer({ graph, realRoot }: { graph: ExplorerGraph; rea
         ),
       },
     },
-    ({ screenId }) => {
-      const screen = screens.get(screenId);
+    async ({ screenId }) => {
+      const served = await current();
+      const { index } = served.snapshot;
+      const screen = index.screens.get(screenId);
       if (screen === undefined) return toolError(`No screen with id ${JSON.stringify(screenId)} in this build`);
       return respond({
-        build: buildInfo,
+        build: buildInfo(served),
         screen,
-        outgoing: (outgoing.get(screenId) ?? []).map((transition) => ({
+        outgoing: (index.outgoing.get(screenId) ?? []).map((transition) => ({
           ...describe(transition),
           target:
             transition.target.kind === 'screen'
-              ? { kind: 'screen', screenId: transition.target.screenId, route: routeOf(transition.target.screenId) }
+              ? { kind: 'screen', screenId: transition.target.screenId, route: routeOf(index, transition.target.screenId) }
               : transition.target,
         })),
-        incoming: (incoming.get(screenId) ?? []).map((transition) => ({
+        incoming: (index.incoming.get(screenId) ?? []).map((transition) => ({
           ...describe(transition),
           sourceScreenId: transition.sourceScreenId,
-          sourceRoute: routeOf(transition.sourceScreenId),
+          sourceRoute: routeOf(index, transition.sourceScreenId),
         })),
       });
     },
@@ -178,12 +176,13 @@ export function createMcpServer({ graph, realRoot }: { graph: ExplorerGraph; rea
       },
     },
     async ({ evidenceId }) => {
-      const ref = sources.get(evidenceId);
+      const served = await current();
+      const ref = served.snapshot.index.sources.get(evidenceId);
       if (ref === undefined) return toolError(`No evidence with id ${JSON.stringify(evidenceId)} in this build`);
       const snippet = await readSnippet({ realRoot, ref });
       if (snippet === null) return toolError(`The source for evidence ${JSON.stringify(evidenceId)} is not readable`);
       return respond({
-        build: buildInfo,
+        build: buildInfo(served),
         evidenceId: ref.evidenceId,
         file: ref.file,
         start: ref.start,
