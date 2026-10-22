@@ -32,6 +32,16 @@ function isTypeOnlyExport(node: ts.ExportDeclaration): boolean {
   );
 }
 
+// A lazy import stored in an object or array is one entry of a table looked up by a runtime key,
+// so the importer renders at most one entry and the table cannot say which.
+function isTableEntry(node: ts.Node): boolean {
+  for (let current = node; !ts.isSourceFile(current); current = current.parent) {
+    if (ts.isPropertyAssignment(current.parent) && current.parent.initializer === current) return true;
+    if (ts.isArrayLiteralExpression(current.parent)) return true;
+  }
+  return false;
+}
+
 function moduleSpecifiers(sourceFile: ts.SourceFile): readonly ts.Expression[] {
   const specifiers: ts.Expression[] = [];
   const visit = (node: ts.Node) => {
@@ -45,7 +55,7 @@ function moduleSpecifiers(sourceFile: ts.SourceFile): readonly ts.Expression[] {
     }
     if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
       const [argument] = node.arguments;
-      if (argument !== undefined) specifiers.push(argument);
+      if (argument !== undefined && !isTableEntry(node)) specifiers.push(argument);
     }
     ts.forEachChild(node, visit);
   };
