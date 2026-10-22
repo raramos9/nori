@@ -58,6 +58,10 @@ describe('resolveTemplate', () => {
     expect(resolve(blog, '/docs/a/b/c')).toEqual(screen('/docs/[...path]'));
   });
 
+  it('lands several holes on one catch-all', () => {
+    expect(resolve(blog, '/docs/*/*')).toEqual(screen('/docs/[...path]'));
+  });
+
   it('ignores the query and hash', () => {
     expect(resolve(blog, '/blog?page=2#top')).toEqual(screen('/blog'));
   });
@@ -134,6 +138,13 @@ describe('locale segment', () => {
   it('matches with and without the locale prefix', () => {
     expect(resolve(localized, '/about')).toEqual(screen('/[locale]/about'));
     expect(resolve(localized, '/en/about')).toEqual(screen('/[locale]/about'));
+  });
+
+  it('lands a locale hole on the locale segment, not a later dynamic one', () => {
+    const matcher = matcherFor(['app/[lang]/about/page.tsx', 'app/[lang]/blog/page.tsx', 'app/[lang]/blog/[slug]/page.tsx']);
+    expect(resolve(matcher, '/*/about')).toEqual(screen('/[lang]/about'));
+    expect(resolve(matcher, '/*/blog')).toEqual(screen('/[lang]/blog'));
+    expect(resolve(matcher, '/*/blog/*')).toEqual(screen('/[lang]/blog/[slug]'));
   });
 
   it('requires the locale with adapters off', () => {
