@@ -11,8 +11,9 @@ export function SignupForm() {
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
-    await fetch('/api/account', { method: 'POST', body: new FormData(event.currentTarget) });
-    router.replace('/projects/new');
+    const response = await fetch('/api/account', { method: 'POST', body: new FormData(event.currentTarget) });
+    const account: { inviteUrl: string | null } = await response.json();
+    router.replace(account.inviteUrl === null ? '/projects/new' : account.inviteUrl);
   }
 
   return (

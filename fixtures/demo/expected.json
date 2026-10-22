@@ -319,6 +319,10 @@
     {
       "from": "/login",
       "why": "LoginForm pushes searchParams.get('next') ?? '/dashboard', and the next query parameter can name any path"
+    },
+    {
+      "from": "/signup",
+      "why": "SignupForm replaces to the inviteUrl the account API returns, which can name any path"
     }
   ]
 }

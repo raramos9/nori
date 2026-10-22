@@ -112,9 +112,39 @@ describe('createEvaluator', () => {
     ]);
   });
 
+  it('keeps the known branch of a ternary beside a hole for the unknown one', () => {
+    expect(
+      evaluatePage("declare const ok: boolean;\ndeclare function next(): string;\nrouter.push(ok ? '/a' : next());"),
+    ).toEqual([paths('/a', '*')]);
+  });
+
+  it('ignores an unknown ternary condition', () => {
+    expect(evaluatePage("declare function ok(): boolean;\nrouter.push(ok() ? '/a' : '/b');")).toEqual([paths('/a', '/b')]);
+  });
+
+  it('keeps a known left side of || beside a hole for the unknown fallback', () => {
+    expect(evaluatePage("declare function next(): string;\nrouter.push('/a' || next());")).toEqual([paths('/a', '*')]);
+  });
+
+  it('reports a ternary with two unknown branches as unknown', () => {
+    expect(
+      evaluatePage(
+        "declare const ok: boolean;\ndeclare function a(): string;\ndeclare function b(): string;\nrouter.push(ok ? a() : b());",
+      ),
+    ).toEqual([{ unknown: 'call' }]);
+  });
+
   it('uses a bracketed route-builder literal when the call cannot be evaluated', () => {
     expect(
       evaluatePage("declare function build(p: string, v: object): string;\nrouter.push(build('/[team]/settings', {}));"),
+    ).toEqual([{ paths: ['/[team]/settings'], fromBuilder: true }]);
+  });
+
+  it('prefers a route-builder literal over a body that names no path', () => {
+    expect(
+      evaluatePage(
+        "declare function fill(p: string): string;\nfunction build(p: string, q?: string) { const path = fill(p); return q ? `${path}?${q}` : path; }\nrouter.push(build('/[team]/settings'));",
+      ),
     ).toEqual([{ paths: ['/[team]/settings'], fromBuilder: true }]);
   });
 

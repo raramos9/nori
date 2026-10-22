@@ -70,6 +70,11 @@ function union(results: readonly Evaluated[]): Evaluated {
   return { kind: 'templates', alternatives, fromBuilder: templates.some((r) => r.fromBuilder) };
 }
 
+function branches(results: readonly Evaluated[]): Evaluated {
+  if (results.every((r) => r.kind === 'unknown')) return union(results);
+  return union(results.map(loose));
+}
+
 function loose(result: Evaluated): Templates {
   return result.kind === 'unknown' ? ANY_STRING : result;
 }
@@ -464,7 +469,7 @@ export function createEvaluator(
       return evaluate(first, env, depth + 1);
     }
     const result = withType(callReturn(e, env, depth), e);
-    if (result.kind === 'templates') return result;
+    if (result.kind === 'templates' && result.alternatives.some(([first]) => first?.kind !== 'hole')) return result;
     return routeBuilderLiteral(e) ?? result;
   }
 
@@ -487,14 +492,11 @@ export function createEvaluator(
         return concat(left, loose(evaluate(e.right, env, depth + 1)));
       }
       if (operator === ts.SyntaxKind.BarBarToken || operator === ts.SyntaxKind.QuestionQuestionToken) {
-        const right = evaluate(e.right, env, depth + 1);
-        const left = evaluate(e.left, env, depth + 1);
-        if (left.kind === 'unknown') return right.kind === 'unknown' ? left : union([ANY_STRING, right]);
-        return union([left, right]);
+        return branches([evaluate(e.left, env, depth + 1), evaluate(e.right, env, depth + 1)]);
       }
     }
     if (ts.isConditionalExpression(e)) {
-      return union([evaluate(e.whenTrue, env, depth + 1), evaluate(e.whenFalse, env, depth + 1)]);
+      return branches([evaluate(e.whenTrue, env, depth + 1), evaluate(e.whenFalse, env, depth + 1)]);
     }
     if (ts.isObjectLiteralExpression(e)) {
       const pathname = propertyNamed(e, 'pathname');
