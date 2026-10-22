@@ -17,6 +17,24 @@ export function screenWidth(route: string): number {
 
 // Left-to-right layers; dagre reports centres, React Flow positions by the top-left corner.
 export function layoutGraph(graph: VisibleGraph, start?: ScreenId): ReadonlyMap<string, Box> {
+  return place(graph, spanningForest(graph, start));
+}
+
+// Neighbours the centre links to rank right of it, neighbours that only link in rank left, so no drawn edge needs to cross its own endpoints.
+export function layoutFocused(graph: VisibleGraph, center: ScreenId): ReadonlyMap<string, Box> {
+  const rankEdges = new Map<string, [ScreenId, ScreenId]>();
+  for (const { source, target } of graph.links) {
+    if (source === center) rankEdges.set(target, [source, target]);
+    else if (!rankEdges.has(source)) rankEdges.set(source, [source, target]);
+  }
+  return place(graph, [...rankEdges.values()]);
+}
+
+export function isBackward(source: Box, target: Box): boolean {
+  return target.x + target.width <= source.x;
+}
+
+function place(graph: VisibleGraph, rankEdges: readonly (readonly [ScreenId, ScreenId])[]): ReadonlyMap<string, Box> {
   const g = new dagre.graphlib.Graph();
   g.setGraph({ rankdir: 'LR', nodesep: 14, ranksep: 110, marginx: 24, marginy: 24 });
   g.setDefaultEdgeLabel(() => ({}));
@@ -27,7 +45,7 @@ export function layoutGraph(graph: VisibleGraph, start?: ScreenId): ReadonlyMap<
   // dagre writes x and y onto the label object, so each node needs its own.
   for (const ghost of graph.ghosts) g.setNode(ghost.id, { ...GHOST_SIZE });
   // dagre ranks only a spanning forest: on dense cyclic graphs every long edge becomes a chain of dummy nodes.
-  for (const [source, target] of spanningForest(graph, start)) g.setEdge(source, target);
+  for (const [source, target] of rankEdges) g.setEdge(source, target);
   for (const ghost of graph.ghosts) g.setEdge(ghost.sourceScreenId, ghostId(ghost.sourceScreenId));
 
   dagre.layout(g);

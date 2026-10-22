@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { parseEvidenceId, parseRoutePattern, parseScreenId, parseTransitionId } from '../../src/graph/model.js';
 import type { ExplorerGraph, ExplorerScreen, ExplorerTransition } from '../../src/explorer/view.js';
-import { STATUSES, visibleGraph } from './flow.js';
-import { layoutGraph } from './layout.js';
+import { focusGraph, STATUSES, visibleGraph } from './flow.js';
+import { isBackward, layoutFocused, layoutGraph } from './layout.js';
 
 const hex = (n: number) => n.toString(16).padStart(16, '0');
 const screen = (n: number, route: string): ExplorerScreen => ({
@@ -59,14 +59,29 @@ describe('layoutGraph', () => {
     expect(xOf(boxes, b)).toBeLessThan(xOf(boxes, c));
   });
 
-  it('puts a focus centre between its in-neighbour and out-neighbour', () => {
+  it('puts a focus centre between its in-neighbours and out-neighbours, mutual ones on the right', () => {
     const [from, center, out, mutual] = [screen(1, '/from'), screen(2, '/center'), screen(3, '/out'), screen(4, '/mutual')];
-    const boxes = layoutGraph(
-      view([from, center, out, mutual], [[from, center], [center, out], [center, mutual], [mutual, center]]),
-      center.id,
-    );
+    const full = view([from, center, out, mutual], [[from, center], [center, out], [center, mutual], [mutual, center]]);
+    const focused = focusGraph(full, center.id);
+    if (focused === null) throw new Error('no focus');
+    const boxes = layoutFocused(focused, center.id);
     expect(xOf(boxes, from)).toBeLessThan(xOf(boxes, center));
     expect(xOf(boxes, center)).toBeLessThan(xOf(boxes, out));
+    expect(xOf(boxes, center)).toBeLessThan(xOf(boxes, mutual));
+  });
+
+  it('keeps every focused edge between distinct columns', () => {
+    const [center, a, b, c] = [screen(1, '/center'), screen(2, '/a'), screen(3, '/b'), screen(4, '/c')];
+    const full = view([center, a, b, c], [[a, center], [center, a], [b, center], [center, c], [c, center]]);
+    const focused = focusGraph(full, center.id);
+    if (focused === null) throw new Error('no focus');
+    const boxes = layoutFocused(focused, center.id);
+    for (const { source, target } of focused.links) {
+      const from = boxes.get(source);
+      const to = boxes.get(target);
+      if (from === undefined || to === undefined) throw new Error('missing box');
+      expect(from.x + from.width <= to.x || isBackward(from, to)).toBe(true);
+    }
   });
 
   it('lays out a dense cyclic graph quickly', () => {

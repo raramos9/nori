@@ -27,7 +27,7 @@ import {
   type GraphIndex,
   type Selection,
 } from './flow.js';
-import { GHOST_SIZE, layoutGraph, NODE_HEIGHT, screenWidth } from './layout.js';
+import { GHOST_SIZE, isBackward, layoutFocused, layoutGraph, NODE_HEIGHT, screenWidth } from './layout.js';
 import { NODE_TYPES, type GhostNodeType, type ScreenNodeType } from './nodes.js';
 import { SidePanel } from './SidePanel.js';
 
@@ -150,9 +150,13 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
     () => (center === undefined ? visible : (focusGraph(visible, center) ?? visible)),
     [visible, center],
   );
+  const focused = rendered === visible ? undefined : center;
   const boxes = useMemo(
-    () => layoutGraph(rendered, center ?? rendered.screens.find(({ route }) => route === '/')?.id),
-    [rendered, center],
+    () =>
+      focused !== undefined
+        ? layoutFocused(rendered, focused)
+        : layoutGraph(rendered, rendered.screens.find(({ route }) => route === '/')?.id),
+    [rendered, focused],
   );
   const matches = useMemo(() => matchingScreens(rendered.screens, deferredQuery), [rendered, deferredQuery]);
   const linkById = useMemo(() => new Map(rendered.links.map((link) => [link.id, link])), [rendered]);
@@ -230,10 +234,15 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
     const result: Edge[] = [];
     for (const link of rendered.links) {
       const count = link.transitions.length;
+      const from = boxes.get(link.source);
+      const to = boxes.get(link.target);
+      const backward = from !== undefined && to !== undefined && isBackward(from, to);
       result.push({
         id: link.id,
         source: link.source,
         target: link.target,
+        sourceHandle: backward ? 'out-back' : 'out',
+        targetHandle: backward ? 'in-back' : 'in',
         label: count > 1 ? String(count) : undefined,
         className: classFor(`resolved status-${link.status}`, link.source, link.target, searching && !(matches.has(link.source) || matches.has(link.target))),
         markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
@@ -246,6 +255,7 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
       result.push({
         id: `edge:${ghost.id}`,
         source: ghost.sourceScreenId,
+        sourceHandle: 'out',
         target: ghost.id,
         label: count > 1 ? String(count) : undefined,
         className: classFor('unresolved', ghost.sourceScreenId, ghost.id, searching && !matches.has(ghost.sourceScreenId)),
@@ -255,7 +265,7 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
       });
     }
     return result;
-  }, [rendered, selection, focus, searching, matches]);
+  }, [rendered, boxes, selection, focus, searching, matches]);
 
   const flowRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -343,7 +353,7 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
             >
               <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} />
               <Controls showInteractive={false} />
-              <MiniMap pannable zoomable nodeClassName={miniMapClass} />
+              {focused === undefined ? <MiniMap pannable zoomable nodeClassName={miniMapClass} /> : null}
             </ReactFlow>
             {visible.screens.length === 0 ? <div className="empty">Nothing matches the current filters.</div> : null}
           </div>

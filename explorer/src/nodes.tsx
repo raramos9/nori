@@ -20,10 +20,12 @@ export function ScreenNode({ data, selected }: NodeProps<ScreenNodeType>) {
   if (data.match) classes.push('match');
   return (
     <div className={classes.join(' ')} title={`${data.route} (${data.status})`}>
-      <Handle type="target" position={Position.Left} isConnectable={false} />
+      <Handle id="in" type="target" position={Position.Left} isConnectable={false} style={{ top: '35%' }} />
+      <Handle id="out-back" type="source" position={Position.Left} isConnectable={false} style={{ top: '70%' }} />
       <span className="route">{data.route}</span>
       {data.selfLoops > 0 ? <span className="loops" title={`${data.selfLoops} links back to this screen`}>↺{data.selfLoops}</span> : null}
-      <Handle type="source" position={Position.Right} isConnectable={false} />
+      <Handle id="out" type="source" position={Position.Right} isConnectable={false} style={{ top: '35%' }} />
+      <Handle id="in-back" type="target" position={Position.Right} isConnectable={false} style={{ top: '70%' }} />
     </div>
   );
 }
