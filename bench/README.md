@@ -53,3 +53,14 @@ An edge is one source screen, one call site and one target screen, so a link in 
 | `per-screen-prop`: a prop set differently per screen switches the call or its value | 4 | Hard |
 | `hole-into-catch-all`: a mostly unknown path lands on a root catch-all | 3 | Yes; all 3 fixed |
 | `both-branches`: the screen fixes which branch of a conditional runs | 1 | Hard |
+
+`precision/seed2.json` is a fresh sample drawn after those fixes (100 edges, seed 2, labelled 2026-10-22, no overlap with seed1). Two judges on different models labelled every edge independently and agreed on 96; the other 4 were settled against the source and say so in `why`. 64 of 100 are correct (64%, about ±9 points at 95%). Seed1 scores higher because the fixes were chosen from its errors; pooled over both samples, 119 of 179 decided edges are correct (66%).
+
+| Cause | Edges | Fixable from source |
+| --- | --- | --- |
+| `runtime-guard` | 16 | No |
+| `redirect-only-page` | 10 | Yes. 7 are inbox-zero's `prefixPath(id, "/x")` fallback branch landing on a bare `/x` page that redirects through a helper; the rest are a client `router.replace` in an effect and a redirect to an external URL |
+| `per-screen-prop` | 5 | Hard |
+| `both-branches` | 3 | Hard |
+| `import-over-attribution` | 1 | Yes |
+| `item-branch`: a literal list feeds two branches and every item is credited to both | 1 | Yes |
