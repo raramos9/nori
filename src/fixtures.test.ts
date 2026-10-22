@@ -7,14 +7,16 @@ import { analyze } from './commands/scan.js';
 import { screenId, stateId } from './graph/ids.js';
 import { DEFAULT_STATE_KEY, type StateId, type StaticIngestion } from './graph/model.js';
 
-const DEMO = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'demo');
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
 
 const edge = z.object({ from: z.string(), to: z.string() });
+const adapterEdge = edge.extend({ adapter: z.enum(['host', 'locale', 'builder']) });
 const expectedSchema = z.object({
   screens: z.array(z.string()),
   edges: z.array(edge),
   missed: z.array(edge.extend({ why: z.string() })),
   open: z.array(z.object({ from: z.string(), why: z.string() })),
+  adapterEdges: z.array(adapterEdge).default([]),
 });
 
 const pairKey = ({ from, to }: { from: string; to: string }) => `${from} -> ${to}`;
@@ -41,12 +43,15 @@ function resolvedPairs(ingestion: StaticIngestion): Set<string> {
   return pairs;
 }
 
-describe('demo fixture ground truth', () => {
-  const expected = expectedSchema.parse(JSON.parse(readFileSync(join(DEMO, 'expected.json'), 'utf8')));
+const CREATED_AT = new Date('2026-01-01T00:00:00Z');
+
+describe.each(['demo', 'adapters'])('%s fixture ground truth', (name) => {
+  const root = join(FIXTURES, name);
+  const expected = expectedSchema.parse(JSON.parse(readFileSync(join(root, 'expected.json'), 'utf8')));
   let ingestion: StaticIngestion;
 
   beforeAll(async () => {
-    ingestion = (await analyze({ path: DEMO, createdAt: new Date('2026-01-01T00:00:00Z') })).ingestion;
+    ingestion = (await analyze({ path: root, createdAt: CREATED_AT })).ingestion;
   });
 
   it('lists only edges between expected screens', () => {
@@ -89,7 +94,16 @@ describe('demo fixture ground truth', () => {
     for (const id of [...ingestion.screens.map((s) => s.id), ...ingestion.transitions.map((t) => t.id)]) {
       const backing = subjects.get(id) ?? [];
       expect(backing.length, id).toBeGreaterThan(0);
-      for (const file of backing) expect(existsSync(join(DEMO, file)), file).toBe(true);
+      for (const file of backing) expect(existsSync(join(root, file)), file).toBe(true);
+    }
+  });
+
+  it('resolves each adapter edge only with adapters on', async () => {
+    const without = resolvedPairs((await analyze({ path: root, createdAt: CREATED_AT, adapters: false })).ingestion);
+    const resolved = resolvedPairs(ingestion);
+    for (const adapterEdge of expected.adapterEdges) {
+      expect(resolved.has(pairKey(adapterEdge)), `${pairKey(adapterEdge)} (${adapterEdge.adapter})`).toBe(true);
+      expect(without.has(pairKey(adapterEdge)), `${pairKey(adapterEdge)} (${adapterEdge.adapter})`).toBe(false);
     }
   });
 });

@@ -1,0 +1,382 @@
+{
+  "screens": [
+    "/[lang]",
+    "/[lang]/about",
+    "/[lang]/blog",
+    "/[lang]/blog/[slug]",
+    "/[lang]/pricing",
+    "/admin.acme.dev",
+    "/admin.acme.dev/settings",
+    "/admin.acme.dev/users",
+    "/app.acme.dev",
+    "/app.acme.dev/projects",
+    "/app.acme.dev/projects/[id]",
+    "/app.acme.dev/settings"
+  ],
+  "edges": [
+    {
+      "from": "/[lang]",
+      "to": "/[lang]"
+    },
+    {
+      "from": "/[lang]",
+      "to": "/[lang]/about"
+    },
+    {
+      "from": "/[lang]",
+      "to": "/[lang]/blog"
+    },
+    {
+      "from": "/[lang]",
+      "to": "/[lang]/blog/[slug]"
+    },
+    {
+      "from": "/[lang]",
+      "to": "/[lang]/pricing"
+    },
+    {
+      "from": "/[lang]/about",
+      "to": "/[lang]"
+    },
+    {
+      "from": "/[lang]/about",
+      "to": "/[lang]/about"
+    },
+    {
+      "from": "/[lang]/about",
+      "to": "/[lang]/blog"
+    },
+    {
+      "from": "/[lang]/about",
+      "to": "/[lang]/pricing"
+    },
+    {
+      "from": "/[lang]/blog",
+      "to": "/[lang]"
+    },
+    {
+      "from": "/[lang]/blog",
+      "to": "/[lang]/about"
+    },
+    {
+      "from": "/[lang]/blog",
+      "to": "/[lang]/blog"
+    },
+    {
+      "from": "/[lang]/blog",
+      "to": "/[lang]/blog/[slug]"
+    },
+    {
+      "from": "/[lang]/blog",
+      "to": "/[lang]/pricing"
+    },
+    {
+      "from": "/[lang]/blog/[slug]",
+      "to": "/[lang]"
+    },
+    {
+      "from": "/[lang]/blog/[slug]",
+      "to": "/[lang]/about"
+    },
+    {
+      "from": "/[lang]/blog/[slug]",
+      "to": "/[lang]/blog"
+    },
+    {
+      "from": "/[lang]/blog/[slug]",
+      "to": "/[lang]/pricing"
+    },
+    {
+      "from": "/[lang]/pricing",
+      "to": "/[lang]"
+    },
+    {
+      "from": "/[lang]/pricing",
+      "to": "/[lang]/about"
+    },
+    {
+      "from": "/[lang]/pricing",
+      "to": "/[lang]/blog"
+    },
+    {
+      "from": "/[lang]/pricing",
+      "to": "/[lang]/pricing"
+    },
+    {
+      "from": "/admin.acme.dev",
+      "to": "/admin.acme.dev"
+    },
+    {
+      "from": "/admin.acme.dev",
+      "to": "/admin.acme.dev/settings"
+    },
+    {
+      "from": "/admin.acme.dev",
+      "to": "/admin.acme.dev/users"
+    },
+    {
+      "from": "/admin.acme.dev/settings",
+      "to": "/admin.acme.dev"
+    },
+    {
+      "from": "/admin.acme.dev/settings",
+      "to": "/admin.acme.dev/settings"
+    },
+    {
+      "from": "/admin.acme.dev/settings",
+      "to": "/admin.acme.dev/users"
+    },
+    {
+      "from": "/admin.acme.dev/users",
+      "to": "/admin.acme.dev"
+    },
+    {
+      "from": "/admin.acme.dev/users",
+      "to": "/admin.acme.dev/settings"
+    },
+    {
+      "from": "/admin.acme.dev/users",
+      "to": "/admin.acme.dev/users"
+    },
+    {
+      "from": "/app.acme.dev",
+      "to": "/app.acme.dev"
+    },
+    {
+      "from": "/app.acme.dev",
+      "to": "/app.acme.dev/projects"
+    },
+    {
+      "from": "/app.acme.dev",
+      "to": "/app.acme.dev/projects/[id]"
+    },
+    {
+      "from": "/app.acme.dev",
+      "to": "/app.acme.dev/settings"
+    },
+    {
+      "from": "/app.acme.dev/projects",
+      "to": "/app.acme.dev"
+    },
+    {
+      "from": "/app.acme.dev/projects",
+      "to": "/app.acme.dev/projects"
+    },
+    {
+      "from": "/app.acme.dev/projects",
+      "to": "/app.acme.dev/projects/[id]"
+    },
+    {
+      "from": "/app.acme.dev/projects",
+      "to": "/app.acme.dev/settings"
+    },
+    {
+      "from": "/app.acme.dev/projects/[id]",
+      "to": "/app.acme.dev"
+    },
+    {
+      "from": "/app.acme.dev/projects/[id]",
+      "to": "/app.acme.dev/projects"
+    },
+    {
+      "from": "/app.acme.dev/projects/[id]",
+      "to": "/app.acme.dev/projects/[id]"
+    },
+    {
+      "from": "/app.acme.dev/projects/[id]",
+      "to": "/app.acme.dev/settings"
+    },
+    {
+      "from": "/app.acme.dev/settings",
+      "to": "/app.acme.dev"
+    },
+    {
+      "from": "/app.acme.dev/settings",
+      "to": "/app.acme.dev/projects"
+    },
+    {
+      "from": "/app.acme.dev/settings",
+      "to": "/app.acme.dev/settings"
+    }
+  ],
+  "missed": [
+    {
+      "from": "/app.acme.dev",
+      "to": "/app.acme.dev/projects/[id]",
+      "why": "ActivityFeed links to item.href, which comes from a runtime fetch of /api/activity"
+    }
+  ],
+  "open": [
+    {
+      "from": "/app.acme.dev/settings",
+      "why": "SettingsForm pushes the returnTo query parameter, which can name any path"
+    }
+  ],
+  "adapterEdges": [
+    {
+      "from": "/[lang]",
+      "to": "/[lang]/blog/[slug]",
+      "adapter": "locale"
+    },
+    {
+      "from": "/[lang]",
+      "to": "/[lang]/pricing",
+      "adapter": "locale"
+    },
+    {
+      "from": "/[lang]/about",
+      "to": "/[lang]/blog",
+      "adapter": "locale"
+    },
+    {
+      "from": "/[lang]/about",
+      "to": "/[lang]/pricing",
+      "adapter": "locale"
+    },
+    {
+      "from": "/[lang]/blog",
+      "to": "/[lang]/blog",
+      "adapter": "locale"
+    },
+    {
+      "from": "/[lang]/blog",
+      "to": "/[lang]/blog/[slug]",
+      "adapter": "locale"
+    },
+    {
+      "from": "/[lang]/blog",
+      "to": "/[lang]/pricing",
+      "adapter": "locale"
+    },
+    {
+      "from": "/[lang]/blog/[slug]",
+      "to": "/[lang]/pricing",
+      "adapter": "locale"
+    },
+    {
+      "from": "/[lang]/pricing",
+      "to": "/[lang]/blog",
+      "adapter": "locale"
+    },
+    {
+      "from": "/[lang]/pricing",
+      "to": "/[lang]/pricing",
+      "adapter": "locale"
+    },
+    {
+      "from": "/admin.acme.dev",
+      "to": "/admin.acme.dev",
+      "adapter": "host"
+    },
+    {
+      "from": "/admin.acme.dev",
+      "to": "/admin.acme.dev/settings",
+      "adapter": "host"
+    },
+    {
+      "from": "/admin.acme.dev",
+      "to": "/admin.acme.dev/users",
+      "adapter": "host"
+    },
+    {
+      "from": "/admin.acme.dev/settings",
+      "to": "/admin.acme.dev",
+      "adapter": "host"
+    },
+    {
+      "from": "/admin.acme.dev/settings",
+      "to": "/admin.acme.dev/settings",
+      "adapter": "host"
+    },
+    {
+      "from": "/admin.acme.dev/settings",
+      "to": "/admin.acme.dev/users",
+      "adapter": "host"
+    },
+    {
+      "from": "/admin.acme.dev/users",
+      "to": "/admin.acme.dev",
+      "adapter": "host"
+    },
+    {
+      "from": "/admin.acme.dev/users",
+      "to": "/admin.acme.dev/settings",
+      "adapter": "host"
+    },
+    {
+      "from": "/admin.acme.dev/users",
+      "to": "/admin.acme.dev/users",
+      "adapter": "host"
+    },
+    {
+      "from": "/app.acme.dev",
+      "to": "/app.acme.dev",
+      "adapter": "host"
+    },
+    {
+      "from": "/app.acme.dev",
+      "to": "/app.acme.dev/projects",
+      "adapter": "host"
+    },
+    {
+      "from": "/app.acme.dev",
+      "to": "/app.acme.dev/settings",
+      "adapter": "host"
+    },
+    {
+      "from": "/app.acme.dev/projects",
+      "to": "/app.acme.dev",
+      "adapter": "host"
+    },
+    {
+      "from": "/app.acme.dev/projects",
+      "to": "/app.acme.dev/projects",
+      "adapter": "host"
+    },
+    {
+      "from": "/app.acme.dev/projects",
+      "to": "/app.acme.dev/projects/[id]",
+      "adapter": "builder"
+    },
+    {
+      "from": "/app.acme.dev/projects",
+      "to": "/app.acme.dev/settings",
+      "adapter": "host"
+    },
+    {
+      "from": "/app.acme.dev/projects/[id]",
+      "to": "/app.acme.dev",
+      "adapter": "host"
+    },
+    {
+      "from": "/app.acme.dev/projects/[id]",
+      "to": "/app.acme.dev/projects",
+      "adapter": "host"
+    },
+    {
+      "from": "/app.acme.dev/projects/[id]",
+      "to": "/app.acme.dev/projects/[id]",
+      "adapter": "builder"
+    },
+    {
+      "from": "/app.acme.dev/projects/[id]",
+      "to": "/app.acme.dev/settings",
+      "adapter": "host"
+    },
+    {
+      "from": "/app.acme.dev/settings",
+      "to": "/app.acme.dev",
+      "adapter": "host"
+    },
+    {
+      "from": "/app.acme.dev/settings",
+      "to": "/app.acme.dev/projects",
+      "adapter": "host"
+    },
+    {
+      "from": "/app.acme.dev/settings",
+      "to": "/app.acme.dev/settings",
+      "adapter": "host"
+    }
+  ]
+}
