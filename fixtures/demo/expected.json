@@ -1,0 +1,318 @@
+{
+  "screens": [
+    "/",
+    "/about",
+    "/dashboard",
+    "/docs",
+    "/docs/[...slug]",
+    "/login",
+    "/pricing",
+    "/projects",
+    "/projects/[id]",
+    "/projects/new",
+    "/settings",
+    "/settings/billing",
+    "/signup"
+  ],
+  "edges": [
+    {
+      "from": "/",
+      "to": "/"
+    },
+    {
+      "from": "/",
+      "to": "/about"
+    },
+    {
+      "from": "/",
+      "to": "/docs"
+    },
+    {
+      "from": "/",
+      "to": "/docs/[...slug]"
+    },
+    {
+      "from": "/",
+      "to": "/login"
+    },
+    {
+      "from": "/",
+      "to": "/pricing"
+    },
+    {
+      "from": "/",
+      "to": "/signup"
+    },
+    {
+      "from": "/about",
+      "to": "/"
+    },
+    {
+      "from": "/about",
+      "to": "/about"
+    },
+    {
+      "from": "/about",
+      "to": "/docs"
+    },
+    {
+      "from": "/about",
+      "to": "/login"
+    },
+    {
+      "from": "/about",
+      "to": "/pricing"
+    },
+    {
+      "from": "/about",
+      "to": "/signup"
+    },
+    {
+      "from": "/dashboard",
+      "to": "/dashboard"
+    },
+    {
+      "from": "/dashboard",
+      "to": "/login"
+    },
+    {
+      "from": "/dashboard",
+      "to": "/projects"
+    },
+    {
+      "from": "/dashboard",
+      "to": "/projects/[id]"
+    },
+    {
+      "from": "/dashboard",
+      "to": "/projects/new"
+    },
+    {
+      "from": "/dashboard",
+      "to": "/settings"
+    },
+    {
+      "from": "/dashboard",
+      "to": "/settings/billing"
+    },
+    {
+      "from": "/docs",
+      "to": "/"
+    },
+    {
+      "from": "/docs",
+      "to": "/about"
+    },
+    {
+      "from": "/docs",
+      "to": "/docs"
+    },
+    {
+      "from": "/docs",
+      "to": "/docs/[...slug]"
+    },
+    {
+      "from": "/docs",
+      "to": "/login"
+    },
+    {
+      "from": "/docs",
+      "to": "/pricing"
+    },
+    {
+      "from": "/docs",
+      "to": "/signup"
+    },
+    {
+      "from": "/docs/[...slug]",
+      "to": "/"
+    },
+    {
+      "from": "/docs/[...slug]",
+      "to": "/about"
+    },
+    {
+      "from": "/docs/[...slug]",
+      "to": "/docs"
+    },
+    {
+      "from": "/docs/[...slug]",
+      "to": "/docs/[...slug]"
+    },
+    {
+      "from": "/docs/[...slug]",
+      "to": "/login"
+    },
+    {
+      "from": "/docs/[...slug]",
+      "to": "/pricing"
+    },
+    {
+      "from": "/docs/[...slug]",
+      "to": "/signup"
+    },
+    {
+      "from": "/login",
+      "to": "/"
+    },
+    {
+      "from": "/login",
+      "to": "/dashboard"
+    },
+    {
+      "from": "/login",
+      "to": "/signup"
+    },
+    {
+      "from": "/pricing",
+      "to": "/"
+    },
+    {
+      "from": "/pricing",
+      "to": "/about"
+    },
+    {
+      "from": "/pricing",
+      "to": "/docs"
+    },
+    {
+      "from": "/pricing",
+      "to": "/login"
+    },
+    {
+      "from": "/pricing",
+      "to": "/pricing"
+    },
+    {
+      "from": "/pricing",
+      "to": "/signup"
+    },
+    {
+      "from": "/projects",
+      "to": "/dashboard"
+    },
+    {
+      "from": "/projects",
+      "to": "/login"
+    },
+    {
+      "from": "/projects",
+      "to": "/projects"
+    },
+    {
+      "from": "/projects",
+      "to": "/projects/[id]"
+    },
+    {
+      "from": "/projects",
+      "to": "/projects/new"
+    },
+    {
+      "from": "/projects",
+      "to": "/settings"
+    },
+    {
+      "from": "/projects/[id]",
+      "to": "/dashboard"
+    },
+    {
+      "from": "/projects/[id]",
+      "to": "/login"
+    },
+    {
+      "from": "/projects/[id]",
+      "to": "/pricing"
+    },
+    {
+      "from": "/projects/[id]",
+      "to": "/projects"
+    },
+    {
+      "from": "/projects/[id]",
+      "to": "/projects/new"
+    },
+    {
+      "from": "/projects/[id]",
+      "to": "/settings"
+    },
+    {
+      "from": "/projects/new",
+      "to": "/dashboard"
+    },
+    {
+      "from": "/projects/new",
+      "to": "/login"
+    },
+    {
+      "from": "/projects/new",
+      "to": "/projects"
+    },
+    {
+      "from": "/projects/new",
+      "to": "/projects/[id]"
+    },
+    {
+      "from": "/projects/new",
+      "to": "/settings"
+    },
+    {
+      "from": "/settings",
+      "to": "/dashboard"
+    },
+    {
+      "from": "/settings",
+      "to": "/login"
+    },
+    {
+      "from": "/settings",
+      "to": "/projects"
+    },
+    {
+      "from": "/settings",
+      "to": "/settings"
+    },
+    {
+      "from": "/settings",
+      "to": "/settings/billing"
+    },
+    {
+      "from": "/settings/billing",
+      "to": "/dashboard"
+    },
+    {
+      "from": "/settings/billing",
+      "to": "/login"
+    },
+    {
+      "from": "/settings/billing",
+      "to": "/pricing"
+    },
+    {
+      "from": "/settings/billing",
+      "to": "/projects"
+    },
+    {
+      "from": "/settings/billing",
+      "to": "/settings"
+    },
+    {
+      "from": "/signup",
+      "to": "/"
+    },
+    {
+      "from": "/signup",
+      "to": "/login"
+    },
+    {
+      "from": "/signup",
+      "to": "/projects/new"
+    }
+  ],
+  "missed": [
+    {
+      "from": "/dashboard",
+      "to": "/settings/billing",
+      "why": "ActivityFeed links to item.href, which comes from a runtime fetch of /api/activity"
+    }
+  ]
+}
