@@ -217,7 +217,10 @@ export function resolveTemplate({
 
   let hits = matcher.routes.filter((route) => segmentMatches(target, route.segments)).sort(compareSpecificity);
   const host = source?.host ?? null;
-  if (host !== null) hits = hits.filter((route) => route.host === host || route.host === null);
+  if (host !== null) {
+    const own = hits.filter((route) => route.host === host);
+    hits = own.length > 0 ? own : hits.filter((route) => route.host === null);
+  }
   const [best] = hits;
   if (best === undefined) return unresolved('no-matching-route');
 
