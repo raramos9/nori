@@ -258,13 +258,22 @@ describe('navigationIngestion', () => {
     ).toEqual(['/ link /a', '/a redirect /b', '/b redirect /a']);
   });
 
-  it('keeps the edge to a redirect-only screen whose redirect is unresolved', () => {
+  it('leaves a link unresolved when the redirect-only screen it reaches redirects somewhere unknown', () => {
     expect(
       edges({
         'app/page.tsx': pageWith("<Link href='/old' />"),
         'app/old/page.tsx': 'declare const to: string;\n' + redirectTo('to'),
       }),
-    ).toEqual(['/ link /old', '/old redirect unresolved dynamic-expression "to"']);
+    ).toEqual([`/ link unresolved dynamic-expression "'/old'"`, '/old redirect unresolved dynamic-expression "to"']);
+  });
+
+  it('drops a link to a redirect-only screen that leaves the app', () => {
+    expect(
+      edges({
+        'app/page.tsx': pageWith("<Link href='/cal' />"),
+        'app/cal/page.tsx': redirectTo("'https://cal.com/team'"),
+      }),
+    ).toEqual([]);
   });
 
   it('forwards through a chain of redirect-only screens', () => {

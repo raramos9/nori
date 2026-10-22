@@ -84,6 +84,42 @@ describe('redirectOnlyPages', () => {
     ).toEqual(['/go']);
   });
 
+  it('detects a page that awaits a helper which only redirects', () => {
+    expect(
+      detect({
+        'app/mail/page.tsx':
+          "import { redirectToAccount } from '../../lib/account';\n" +
+          "export default async function Page() { await redirectToAccount('/mail'); }\n",
+        'lib/account.ts':
+          IMPORT +
+          'declare function user(): Promise<string | null>;\n' +
+          "export async function redirectToAccount(path: string) {\n  const id = await user();\n  if (!id) redirect('/login');\n  redirect(`/${id}${path}`);\n}\n",
+      }),
+    ).toEqual(['/mail']);
+  });
+
+  it('does not count a helper that returns a value', () => {
+    expect(
+      detect({
+        'app/a/page.tsx':
+          IMPORT +
+          "declare function load(): Promise<string | null>;\n" +
+          "async function guard() { const r = await load(); if (!r) redirect('/'); return r; }\n" +
+          'export default async function Page() { await guard(); }\n',
+      }),
+    ).toEqual([]);
+  });
+
+  it('detects a client page that replaces the route in an effect and renders null', () => {
+    expect(
+      detect({
+        'app/ws/page.tsx':
+          "'use client';\nimport { useRouter } from 'next/navigation';\nimport { useEffect } from 'react';\n" +
+          "export default function Page() {\n  const router = useRouter();\n  useEffect(() => {\n    router.replace('/ws/projects');\n  }, [router]);\n  return null;\n}\n",
+      }),
+    ).toEqual(['/ws']);
+  });
+
   it('does not count a page with no redirect', () => {
     expect(detect({ 'app/a/page.tsx': 'export default function Page() { return null; }\n' })).toEqual([]);
   });
