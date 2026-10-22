@@ -73,7 +73,11 @@ export function createMatcher({
   return { routes: table.routes.map((route) => matchRoute(route, hosts, adapters)), assets, adapters };
 }
 
-function segmentMatches(target: readonly TargetSegment[], route: readonly MatchSegment[]): boolean {
+function segmentMatches(
+  target: readonly TargetSegment[],
+  route: readonly MatchSegment[],
+  holes: 'any-segment' | 'dynamic-only',
+): boolean {
   const go = (i: number, j: number): boolean => {
     const r = route[j];
     if (r === undefined) return i === target.length;
@@ -89,7 +93,8 @@ function segmentMatches(target: readonly TargetSegment[], route: readonly MatchS
       case 'static': {
         const t = target[i];
         if (t === undefined) return false;
-        return (t.kind === 'hole' || t.value === r.value) && go(i + 1, j + 1);
+        const fits = t.kind === 'hole' ? holes === 'any-segment' : t.value === r.value;
+        return fits && go(i + 1, j + 1);
       }
       default: {
         const _exhaustive: never = r;
@@ -215,7 +220,9 @@ export function resolveTemplate({
       matcher.adapters && segment.kind === 'text' && BRACKETED.test(segment.value) ? { kind: 'hole' } : segment,
   );
 
-  let hits = matcher.routes.filter((route) => segmentMatches(target, route.segments)).sort(compareSpecificity);
+  let hits = matcher.routes
+    .filter((route) => segmentMatches(target, route.segments, 'any-segment'))
+    .sort(compareSpecificity);
   const host = source?.host ?? null;
   if (host !== null) {
     const own = hits.filter((route) => route.host === host);
@@ -224,17 +231,11 @@ export function resolveTemplate({
   const [best] = hits;
   if (best === undefined) return unresolved('no-matching-route');
 
-  const holes = target.flatMap((segment, i) => (segment.kind === 'hole' ? [i] : []));
-  if (holes.length === 0) {
+  if (target.every((segment) => segment.kind === 'text')) {
     const tied = hits.filter((route) => compareSpecificity(route, best) === 0);
     return hostsOf(tied) === 1 ? toScreen(best) : unresolved('ambiguous-route');
   }
-  const viaDynamic = hits.filter((route) =>
-    holes.every((i) => {
-      const segment = route.segments[i];
-      return segment !== undefined && segment.kind !== 'static';
-    }),
-  );
+  const viaDynamic = hits.filter((route) => segmentMatches(target, route.segments, 'dynamic-only'));
   const [chosen] = viaDynamic;
   if (chosen !== undefined && hostsOf(viaDynamic) === 1) return toScreen(chosen);
   return unresolved('ambiguous-route');
