@@ -106,6 +106,12 @@ describe('createEvaluator', () => {
     expect(evaluatePage('declare function docs(): string;\n<Link href={docs()} />;')).toEqual([{ unknown: 'call' }]);
   });
 
+  it('keeps an unknown left side of ?? as a hole beside the fallback', () => {
+    expect(evaluatePage("declare function next(): string | null;\nrouter.push(next() ?? '/a');")).toEqual([
+      paths('*', '/a'),
+    ]);
+  });
+
   it('uses a bracketed route-builder literal when the call cannot be evaluated', () => {
     expect(
       evaluatePage("declare function build(p: string, v: object): string;\nrouter.push(build('/[team]/settings', {}));"),

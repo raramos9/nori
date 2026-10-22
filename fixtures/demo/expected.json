@@ -314,5 +314,11 @@
       "to": "/settings/billing",
       "why": "ActivityFeed links to item.href, which comes from a runtime fetch of /api/activity"
     }
+  ],
+  "open": [
+    {
+      "from": "/login",
+      "why": "LoginForm pushes searchParams.get('next') ?? '/dashboard', and the next query parameter can name any path"
+    }
   ]
 }
