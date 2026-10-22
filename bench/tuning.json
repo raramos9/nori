@@ -1,0 +1,24 @@
+{
+  "picked": "2026-10-21",
+  "apps": [
+    { "repo": "vercel/commerce", "commit": "f7521d57d29f0eb3d23c1399cf9bb299d61fcd21", "root": "." },
+    { "repo": "vercel/ai-chatbot", "commit": "c2f8235e1f3ea903ad8b7f61447c4f74164b5c58", "root": "." },
+    { "repo": "nextjs/saas-starter", "commit": "6e33e58b1e553a41fe22e6b941a7229a002de361", "root": "." },
+    { "repo": "shadcn-ui/taxonomy", "commit": "298a8857c7128a0d121e7f699dfd729f23b3966d", "root": "." },
+    { "repo": "sadmann7/skateshop", "commit": "e954d54379a7a6f798d3f49ffc6664449220adfc", "root": "." },
+    { "repo": "shadcn-ui/ui", "commit": "ba1503c64472b82256d9de95e2e62c5901a38e8b", "root": "apps/v4" },
+    { "repo": "lukevella/rallly", "commit": "078051bbd8c251fe921fd2fa8c6f57aeff0b3ccf", "root": "apps/web" },
+    { "repo": "lukevella/rallly", "commit": "078051bbd8c251fe921fd2fa8c6f57aeff0b3ccf", "root": "apps/landing" },
+    { "repo": "elie222/inbox-zero", "commit": "fdc97e280e9bb32c550f03eb6e9d74185ce03216", "root": "apps/web" },
+    { "repo": "midday-ai/midday", "commit": "51587319f26a0ffaa9dfccab1920373cb65689b7", "root": "apps/dashboard" },
+    { "repo": "midday-ai/midday", "commit": "51587319f26a0ffaa9dfccab1920373cb65689b7", "root": "apps/website" },
+    { "repo": "dubinc/dub", "commit": "68bf6bf2c5aa9b72b4051991a66b1a0375140015", "root": "apps/web" },
+    { "repo": "formbricks/formbricks", "commit": "a421f2495d141c33789efb843decb94d6bede7af", "root": "apps/web" },
+    { "repo": "unkeyed/unkey", "commit": "d47681fb0fd6cea3e898ed069f781064b9d3fe8e", "root": "web/apps/dashboard" },
+    { "repo": "calcom/cal.com", "commit": "0f19cc46ef6b6426ee398c670575b3c96be7af9e", "root": "apps/web" },
+    { "repo": "langgenius/dify", "commit": "4e5424ed43a1bc6359f4676071207ffa7f909373", "root": "web" },
+    { "repo": "openstatusHQ/openstatus", "commit": "e5e44b71533392d0fa2516023d8d241f9e65b08d", "root": "apps/web" },
+    { "repo": "openstatusHQ/openstatus", "commit": "e5e44b71533392d0fa2516023d8d241f9e65b08d", "root": "apps/dashboard" },
+    { "repo": "openstatusHQ/openstatus", "commit": "e5e44b71533392d0fa2516023d8d241f9e65b08d", "root": "apps/status-page" }
+  ]
+}
