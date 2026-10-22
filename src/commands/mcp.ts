@@ -2,7 +2,11 @@ import { realpath } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { toExplorerGraph } from '../explorer/view.js';
+import { sourceHash } from '../graph/source-hash.js';
+import { discoverProject } from '../next/project.js';
+import { createLiveSnapshot, type LiveSnapshot } from '../mcp/live.js';
 import { createMcpServer } from '../mcp/server.js';
+import { createSnapshot, type Snapshot } from '../mcp/snapshot.js';
 import type { Command } from './command.js';
 import { exploreGraph } from './explore.js';
 
@@ -15,6 +19,28 @@ function untilClosed({ closed }: { closed: Promise<void> }): Promise<void> {
   ]);
 }
 
+// The key comes from the build that produced the graph, so an edit landing mid-analysis differs from it on the next probe.
+async function analyzeSnapshot({ path }: { path: string }): Promise<Snapshot> {
+  const { root, graph } = await exploreGraph({ path });
+  return createSnapshot({
+    graph: toExplorerGraph({ root, graph }),
+    key: { commitSha: graph.build.commitSha, sourceHash: graph.build.sourceHash },
+  });
+}
+
+export async function openLiveSnapshot({ path }: { path: string }): Promise<LiveSnapshot> {
+  const initial = await analyzeSnapshot({ path });
+  const { root } = initial.graph;
+  return createLiveSnapshot({
+    initial,
+    probe: async () => {
+      const project = await discoverProject({ path: root });
+      return { commitSha: project.commitSha, sourceHash: sourceHash({ files: project.files }) };
+    },
+    reanalyze: () => analyzeSnapshot({ path: root }),
+  });
+}
+
 export const mcpCommand: Command = {
   summary: 'serve the latest analysis to coding agents over MCP (stdio)',
   async run(argv) {
@@ -24,17 +50,18 @@ export const mcpCommand: Command = {
       return 2;
     }
 
-    const { root, graph } = await exploreGraph({ path: positionals[0] ?? process.cwd() });
-    const view = toExplorerGraph({ root, graph });
-    const server = createMcpServer({ graph: view, realRoot: await realpath(root) });
+    const live = await openLiveSnapshot({ path: positionals[0] ?? process.cwd() });
+    const { snapshot: initial } = await live.current();
+    const { root } = initial.graph;
+    const server = createMcpServer({ current: live.current, realRoot: await realpath(root) });
     const closed = new Promise<void>((resolve) => {
       server.server.onclose = resolve;
     });
     await server.connect(new StdioServerTransport());
 
-    const { commitSha, branch } = view.build;
+    const { commitSha, branch } = initial.graph.build;
     process.stderr.write(
-      `nori: serving ${commitSha.slice(0, 7)} on ${branch ?? 'detached HEAD'}: ${view.screens.length} screens, ${view.transitions.length} transitions\n`,
+      `nori: serving ${commitSha.slice(0, 7)} on ${branch ?? 'detached HEAD'}: ${initial.graph.screens.length} screens, ${initial.graph.transitions.length} transitions\n`,
     );
 
     await untilClosed({ closed });

@@ -1,13 +1,16 @@
-import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, describe, expect, it } from 'vitest';
+import { openLiveSnapshot } from '../commands/mcp.js';
 import { exploreGraph } from '../commands/explore.js';
 import { toExplorerGraph, type ExplorerGraph } from '../explorer/view.js';
+import { parseCommitSha } from '../graph/model.js';
 import { gitFixture } from '../testing/git-fixture.js';
 import { createMcpServer } from './server.js';
+import { createSnapshot } from './snapshot.js';
 
 const tempDirs: string[] = [];
 
@@ -17,7 +20,11 @@ afterEach(() => {
 
 async function connect({ graph, realRoot }: { graph: ExplorerGraph; realRoot: string }): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await createMcpServer({ graph, realRoot }).connect(serverTransport);
+  const snapshot = createSnapshot({
+    graph,
+    key: { commitSha: parseCommitSha(graph.build.commitSha), sourceHash: '' },
+  });
+  await createMcpServer({ current: async () => ({ snapshot, refreshError: null }), realRoot }).connect(serverTransport);
   const client = new Client({ name: 'test', version: '0.0.0' });
   await client.connect(clientTransport);
   return client;
@@ -118,5 +125,29 @@ describe('nori MCP server', () => {
     const result = await client.callTool({ name: 'read_source', arguments: { evidenceId } });
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result)).not.toContain('secret');
+  });
+
+  it('serves a fresh graph after an uncommitted edit', async () => {
+    const root = gitFixture();
+    tempDirs.push(root);
+    const live = await openLiveSnapshot({ path: root });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await createMcpServer({ current: live.current, realRoot: root }).connect(serverTransport);
+    const client = new Client({ name: 'test', version: '0.0.0' });
+    await client.connect(clientTransport);
+    type Listed = { build: { id: string; refreshError: string | null }; screens: { route: string }[] };
+
+    const before = (await client.callTool({ name: 'list_screens' })).structuredContent as Listed;
+    expect(before.screens.map(({ route }) => route)).toEqual(['/', '/about']);
+    const again = (await client.callTool({ name: 'list_screens' })).structuredContent as Listed;
+    expect(again.build.id).toBe(before.build.id);
+
+    mkdirSync(join(root, 'app/pricing'));
+    writeFileSync(join(root, 'app/pricing/page.tsx'), 'export default function Page() {\n  return null;\n}\n');
+
+    const after = (await client.callTool({ name: 'list_screens' })).structuredContent as Listed;
+    expect(after.screens.map(({ route }) => route)).toEqual(['/', '/about', '/pricing']);
+    expect(after.build.id).not.toBe(before.build.id);
+    expect(after.build.refreshError).toBeNull();
   });
 });
