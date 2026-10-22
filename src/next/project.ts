@@ -1,9 +1,9 @@
 import { lstat, readFile, realpath } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { errorCode, NoriError } from '../errors.js';
 import type { CommitSha } from '../graph/model.js';
 import type { SourceFile } from '../graph/source-hash.js';
-import { assertInsideWorkTree, listFiles, readHead } from '../repo/git.js';
+import { assertInsideWorkTree, listFiles, readHead, workTreeTop } from '../repo/git.js';
 import { APP_DIRS, type AppDir } from './routes.js';
 
 export type NextProject = {
@@ -52,19 +52,40 @@ function hasDependency(manifest: unknown, name: string): boolean {
   });
 }
 
+async function readManifest(path: string): Promise<unknown> {
+  const text = await readFileIfPresent(path);
+  if (text === null) return null;
+  try {
+    return JSON.parse(text.toString('utf8'));
+  } catch (error) {
+    throw new NoriError(`${path} is not valid JSON`, { cause: error });
+  }
+}
+
+function ancestorsUpTo(root: string, top: string): readonly string[] {
+  const dirs: string[] = [];
+  let dir = root;
+  while (dir !== top && !relative(top, dir).startsWith('..') && dirname(dir) !== dir) {
+    dir = dirname(dir);
+    dirs.push(dir);
+  }
+  return dirs;
+}
+
+// Single-version monorepos hoist next into the workspace root manifest, so ancestors up to the
+// repository root count too.
 async function assertNextManifest({ root }: { root: string }): Promise<void> {
   const manifestPath = join(root, 'package.json');
-  const text = await readFileIfPresent(manifestPath);
-  if (text === null) throw new NoriError(`No package.json in ${root}. Run nori in a Next.js project.`);
-  let manifest: unknown;
-  try {
-    manifest = JSON.parse(text.toString('utf8'));
-  } catch (error) {
-    throw new NoriError(`${manifestPath} is not valid JSON`, { cause: error });
+  const manifest = await readManifest(manifestPath);
+  if (manifest === null) throw new NoriError(`No package.json in ${root}. Run nori in a Next.js project.`);
+  if (hasDependency(manifest, 'next')) return;
+  const top = await workTreeTop({ root });
+  for (const dir of top === null ? [] : ancestorsUpTo(root, top)) {
+    if (hasDependency(await readManifest(join(dir, 'package.json')), 'next')) return;
   }
-  if (!hasDependency(manifest, 'next')) {
-    throw new NoriError(`${manifestPath} does not list next in dependencies or devDependencies`);
-  }
+  throw new NoriError(
+    `${manifestPath} does not list next in dependencies or devDependencies, and no package.json above it in the repository does`,
+  );
 }
 
 async function findAppDir({ root }: { root: string }): Promise<AppDir> {

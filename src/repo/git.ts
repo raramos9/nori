@@ -55,6 +55,11 @@ export async function assertInsideWorkTree({ root }: { root: string }): Promise<
   if (result.kind === 'failed') throw new NoriError(`${root} is not inside a git repository`);
 }
 
+export async function workTreeTop({ root }: { root: string }): Promise<string | null> {
+  const result = await runGit({ cwd: root, args: ['rev-parse', '--show-toplevel'] });
+  return result.kind === 'ok' ? result.stdout.trim() : null;
+}
+
 // Paths come back relative to `root`, POSIX-separated. -z avoids git's quoting of unusual file names.
 export async function listFiles({ root }: { root: string }): Promise<readonly string[]> {
   const stdout = await runGitOrThrow({
