@@ -14,6 +14,7 @@ const expectedSchema = z.object({
   screens: z.array(z.string()),
   edges: z.array(edge),
   missed: z.array(edge.extend({ why: z.string() })),
+  open: z.array(z.object({ from: z.string(), why: z.string() })),
 });
 
 const pairKey = ({ from, to }: { from: string; to: string }) => `${from} -> ${to}`;
@@ -75,7 +76,7 @@ describe('demo fixture ground truth', () => {
       const from = patterns.get(sourceStateId);
       if (target.kind === 'unresolved' && from !== undefined) unresolvedFrom.add(from);
     }
-    for (const { from } of expected.missed) expect(unresolvedFrom.has(from), from).toBe(true);
+    for (const { from } of [...expected.missed, ...expected.open]) expect(unresolvedFrom.has(from), from).toBe(true);
   });
 
   it('backs every screen and transition with evidence inside the fixture', () => {

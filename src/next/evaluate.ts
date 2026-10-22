@@ -489,7 +489,7 @@ export function createEvaluator(
       if (operator === ts.SyntaxKind.BarBarToken || operator === ts.SyntaxKind.QuestionQuestionToken) {
         const right = evaluate(e.right, env, depth + 1);
         const left = evaluate(e.left, env, depth + 1);
-        if (left.kind === 'unknown') return right.kind === 'unknown' ? left : right;
+        if (left.kind === 'unknown') return right.kind === 'unknown' ? left : union([ANY_STRING, right]);
         return union([left, right]);
       }
     }

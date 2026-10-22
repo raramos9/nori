@@ -6,7 +6,7 @@ A small Next.js App Router app ("Tasks", a project tracker) with a marketing sit
 nori explore fixtures/demo
 ```
 
-`expected.json` lists every screen and every navigation a user can follow at runtime, written from the app's behavior before nori ran on it. `missed` is the subset static analysis can't resolve, each with a reason. `src/fixtures.test.ts` checks nori against it.
+`expected.json` lists every screen and every navigation a user can follow at runtime, written from the app's behavior before nori ran on it. `missed` is the subset static analysis can't resolve, each with a reason. `open` lists screens with a call whose targets can't be named at all, such as a redirect to a query parameter. `src/fixtures.test.ts` checks nori against it.
 
 | Measure | Value |
 | --- | --- |
