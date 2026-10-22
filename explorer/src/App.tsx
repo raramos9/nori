@@ -150,7 +150,10 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
     () => (center === undefined ? visible : (focusGraph(visible, center) ?? visible)),
     [visible, center],
   );
-  const boxes = useMemo(() => layoutGraph(rendered), [rendered]);
+  const boxes = useMemo(
+    () => layoutGraph(rendered, center ?? rendered.screens.find(({ route }) => route === '/')?.id),
+    [rendered, center],
+  );
   const matches = useMemo(() => matchingScreens(rendered.screens, deferredQuery), [rendered, deferredQuery]);
   const linkById = useMemo(() => new Map(rendered.links.map((link) => [link.id, link])), [rendered]);
   const ghostById = useMemo(() => new Map(rendered.ghosts.map((ghost) => [ghost.id, ghost])), [rendered]);
