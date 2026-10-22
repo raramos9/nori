@@ -18,7 +18,7 @@ import { createEvaluator, type Evaluated } from '../next/evaluate.js';
 import { createMatcher, resolveTemplate, type Matcher, type MatchRoute, type Resolution } from '../next/match.js';
 import { findNavCalls, NAV_EXTRACTOR, type NavCall } from '../next/nav-calls.js';
 import { createProgram, isProgramFile } from '../next/program.js';
-import { screensByFile } from '../next/reach.js';
+import { screenReach } from '../next/reach.js';
 import { redirectOnlyPages } from '../next/redirect-pages.js';
 import type { RouteTable } from '../next/routes.js';
 
@@ -144,7 +144,7 @@ export function navigationIngestion({
   const paths = files.map((file) => file.path);
   const matcher = createMatcher({ table, files: paths, adapters });
   const redirectOnly = redirectOnlyPages({ program, root, table });
-  const reach = screensByFile({ program, root, table, files: paths, redirectOnly });
+  const screensOf = screenReach({ program, root, table, files: paths, redirectOnly });
   const pages = new Map<RoutePattern, MatchRoute>();
   for (const route of matcher.routes) {
     if (route.route.kind === 'page' && !pages.has(route.route.pattern)) pages.set(route.route.pattern, route);
@@ -159,7 +159,7 @@ export function navigationIngestion({
     if (sourceFile === undefined) continue;
     for (const call of findNavCalls(sourceFile, path)) {
       const evaluated = evaluate(call.expression);
-      const sources = [...(reach.get(path) ?? [])].sort();
+      const sources = [...screensOf(call.expression)].sort();
       if (sources.length === 0) {
         outcomes.push({ call, contexts: [{ source: null, classification: classify(targetsIn(evaluated, matcher, null)) }] });
         continue;
