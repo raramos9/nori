@@ -43,7 +43,7 @@ NODE_OPTIONS=--max-old-space-size=8192 pnpm exec tsx bench/precision.ts --score 
 
 An edge is one source screen, one call site and one target screen, so a link in a shared layout counts once per screen it renders on. Each row has a stable `id`, the source and target patterns, the trigger, and the call's file, line and code. Only tuning apps are sampled; the held-out set stays unread.
 
-`precision/seed1.json` is the first labelled sample (100 edges, seed 1, labelled 2026-10-22). Each edge carries a `verdict` (`correct`, `wrong-source`, `wrong-target`, `unclear`) with the evidence, and wrong edges carry a `cause`. The judges first reported 60 of 98 correct; four of those edges start or end on a page that only redirects, so the corrected baseline is 56 of 98 (57%). After redirect-only pages became pass-throughs, 10 sampled edges disappeared and 56 of the remaining 88 decided edges are correct (64%). Reach now skips lazy-import tables and follows the names a screen uses rather than whole files; 82 sampled edges survive and 55 of the 80 decided ones are correct (68.8%). The one correct edge lost came from an mdx file naming a registry demo, which nori cannot see.
+`precision/seed1.json` is the first labelled sample (100 edges, seed 1, labelled 2026-10-22). Each edge carries a `verdict` (`correct`, `wrong-source`, `wrong-target`, `unclear`) with the evidence, and wrong edges carry a `cause`. The judges first reported 60 of 98 correct; four of those edges start or end on a page that only redirects, so the corrected baseline is 56 of 98 (57%). After redirect-only pages became pass-throughs, 10 sampled edges disappeared and 56 of the remaining 88 decided edges are correct (64%). Reach now skips lazy-import tables and follows the names a screen uses rather than whole files; 82 sampled edges survive and 55 of the 80 decided ones are correct (68.8%). The one correct edge lost came from an mdx file naming a registry demo, which nori cannot see. A hole that fits only by landing in a catch-all is now ambiguous when a dynamic segment could take it instead; 81 sampled edges survive and 55 of the 79 decided ones are correct (69.6%).
 
 | Cause | Edges | Fixable from source |
 | --- | --- | --- |
@@ -51,5 +51,5 @@ An edge is one source screen, one call site and one target screen, so a link in 
 | `redirect-only-page`: the source or target page only calls `redirect()` | 12 | Yes; 8 fixed, 4 inbox-zero pages redirect through a helper |
 | `import-over-attribution`: a server-action file or lazy registry credits every importer | 7 | Yes; all 7 fixed |
 | `per-screen-prop`: a prop set differently per screen switches the call or its value | 4 | Hard |
-| `hole-into-catch-all`: a mostly unknown path lands on a root catch-all | 3 | Yes |
+| `hole-into-catch-all`: a mostly unknown path lands on a root catch-all | 3 | Yes; all 3 fixed |
 | `both-branches`: the screen fixes which branch of a conditional runs | 1 | Hard |

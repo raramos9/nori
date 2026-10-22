@@ -147,6 +147,26 @@ describe('locale segment', () => {
     expect(resolve(matcher, '/*/blog/*')).toEqual(screen('/[lang]/blog/[slug]'));
   });
 
+  it('reports a hole that could be a locale or a catch-all path as ambiguous', () => {
+    const matcher = matcherFor([
+      'app/[locale]/page.tsx',
+      'app/[locale]/privacy-policy/page.tsx',
+      'app/[locale]/[...notFound]/page.tsx',
+    ]);
+    expect(resolve(matcher, '/*')).toEqual({ kind: 'unresolved', reason: 'ambiguous-route' });
+    expect(resolve(matcher, '/**')).toEqual({ kind: 'unresolved', reason: 'ambiguous-route' });
+  });
+
+  it('lands a hole on a catch-all when no dynamic segment could take it', () => {
+    const matcher = matcherFor(['app/[...slug]/page.tsx', 'app/dashboard/page.tsx']);
+    expect(resolve(matcher, '/dashboard/stores/*')).toEqual(screen('/[...slug]'));
+  });
+
+  it('keeps a catch-all under a static segment over a dynamic route it outranks', () => {
+    const matcher = matcherFor(['app/marketplace/[[...segments]]/page.tsx', 'app/[program]/[group]/page.tsx']);
+    expect(resolve(matcher, '/marketplace/*')).toEqual(screen('/marketplace/[[...segments]]'));
+  });
+
   it('requires the locale with adapters off', () => {
     const raw = matcherFor(['app/[locale]/about/page.tsx'], false);
     expect(resolve(raw, '/about')).toEqual({ kind: 'unresolved', reason: 'no-matching-route' });
