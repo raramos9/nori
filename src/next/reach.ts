@@ -7,31 +7,6 @@ const WRAPPER_FILES = ['layout', 'template'].flatMap((name) =>
   ['tsx', 'ts', 'jsx', 'js'].map((extension) => `${name}.${extension}`),
 );
 
-function isTypeOnlyImport(node: ts.ImportDeclaration): boolean {
-  const clause = node.importClause;
-  if (clause === undefined) return false;
-  if (clause.isTypeOnly) return true;
-  const bindings = clause.namedBindings;
-  return (
-    clause.name === undefined &&
-    bindings !== undefined &&
-    ts.isNamedImports(bindings) &&
-    bindings.elements.length > 0 &&
-    bindings.elements.every((element) => element.isTypeOnly)
-  );
-}
-
-function isTypeOnlyExport(node: ts.ExportDeclaration): boolean {
-  if (node.isTypeOnly) return true;
-  const clause = node.exportClause;
-  return (
-    clause !== undefined &&
-    ts.isNamedExports(clause) &&
-    clause.elements.length > 0 &&
-    clause.elements.every((element) => element.isTypeOnly)
-  );
-}
-
 // A lazy import stored in an object or array is one entry of a table looked up by a runtime key,
 // so the importer renders at most one entry and the table cannot say which.
 function isTableEntry(node: ts.Node): boolean {
@@ -42,28 +17,44 @@ function isTableEntry(node: ts.Node): boolean {
   return false;
 }
 
-function moduleSpecifiers(sourceFile: ts.SourceFile): readonly ts.Expression[] {
-  const specifiers: ts.Expression[] = [];
-  const visit = (node: ts.Node) => {
-    if (ts.isImportDeclaration(node)) {
-      if (!isTypeOnlyImport(node)) specifiers.push(node.moduleSpecifier);
-      return;
-    }
-    if (ts.isExportDeclaration(node)) {
-      if (node.moduleSpecifier !== undefined && !isTypeOnlyExport(node)) specifiers.push(node.moduleSpecifier);
-      return;
-    }
-    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-      const [argument] = node.arguments;
-      if (argument !== undefined && !isTableEntry(node)) specifiers.push(argument);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
-  return specifiers;
+type Unit = ts.Statement | ts.SourceFile;
+
+function topLevelStatement(node: ts.Node): ts.Statement | undefined {
+  for (let current = node; current.parent !== undefined; current = current.parent) {
+    if (ts.isSourceFile(current.parent)) return current as ts.Statement;
+  }
+  return undefined;
 }
 
-function importGraph({
+function isTypeDeclaration(statement: ts.Statement): boolean {
+  return ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement);
+}
+
+function isEvaluation(statement: ts.Statement): boolean {
+  return !(
+    ts.isFunctionDeclaration(statement) ||
+    ts.isClassDeclaration(statement) ||
+    ts.isVariableStatement(statement) ||
+    ts.isEnumDeclaration(statement) ||
+    ts.isModuleDeclaration(statement) ||
+    ts.isImportDeclaration(statement) ||
+    ts.isImportEqualsDeclaration(statement) ||
+    ts.isExportDeclaration(statement) ||
+    ts.isExportAssignment(statement) ||
+    isTypeDeclaration(statement)
+  );
+}
+
+function isClassExtends(node: ts.Node): node is ts.ExpressionWithTypeArguments {
+  return (
+    ts.isExpressionWithTypeArguments(node) &&
+    ts.isHeritageClause(node.parent) &&
+    node.parent.token === ts.SyntaxKind.ExtendsKeyword &&
+    ts.isClassLike(node.parent.parent)
+  );
+}
+
+function referenceGraph({
   program,
   root,
   tracked,
@@ -71,22 +62,90 @@ function importGraph({
   program: ts.Program;
   root: string;
   tracked: ReadonlySet<string>;
-}): ReadonlyMap<string, readonly string[]> {
+}): (unit: Unit) => readonly Unit[] {
   const checker = program.getTypeChecker();
-  const graph = new Map<string, string[]>();
-  for (const sourceFile of program.getSourceFiles()) {
-    const from = relative(root, sourceFile.fileName);
-    if (!tracked.has(from)) continue;
-    const imports: string[] = [];
-    for (const specifier of moduleSpecifiers(sourceFile)) {
-      const target = checker.getSymbolAtLocation(specifier)?.valueDeclaration;
-      if (target === undefined || !ts.isSourceFile(target)) continue;
-      const to = relative(root, target.fileName);
-      if (tracked.has(to)) imports.push(to);
+  const trackedFiles = new Set(
+    program.getSourceFiles().filter((sourceFile) => tracked.has(relative(root, sourceFile.fileName))),
+  );
+
+  const moduleAt = (specifier: ts.Expression | undefined): ts.SourceFile | undefined => {
+    const target = specifier === undefined ? undefined : checker.getSymbolAtLocation(specifier)?.valueDeclaration;
+    return target !== undefined && ts.isSourceFile(target) && trackedFiles.has(target) ? target : undefined;
+  };
+
+  const symbolOf = (identifier: ts.Identifier): ts.Symbol | undefined => {
+    const parent = identifier.parent;
+    if (ts.isShorthandPropertyAssignment(parent)) return checker.getShorthandAssignmentValueSymbol(parent);
+    if (ts.isExportSpecifier(parent)) {
+      if (parent.isTypeOnly || identifier !== (parent.propertyName ?? parent.name)) return undefined;
+      return parent.parent.parent.moduleSpecifier === undefined
+        ? checker.getExportSpecifierLocalTargetSymbol(parent)
+        : checker.getSymbolAtLocation(identifier);
     }
-    graph.set(from, imports);
-  }
-  return graph;
+    if ((parent as { name?: ts.Node }).name === identifier) return undefined;
+    if (ts.isBindingElement(parent) && parent.propertyName === identifier) return undefined;
+    return checker.getSymbolAtLocation(identifier);
+  };
+
+  const statementEdges = (statement: ts.Statement): readonly Unit[] => {
+    if (isTypeDeclaration(statement)) return [];
+    const edges = new Set<Unit>([statement.getSourceFile()]);
+    const reachModule = (sourceFile: ts.SourceFile | undefined) => {
+      for (const target of sourceFile?.statements ?? []) edges.add(target);
+    };
+    if (ts.isImportDeclaration(statement) || ts.isImportEqualsDeclaration(statement)) return [...edges];
+    if (ts.isExportDeclaration(statement)) {
+      if (statement.isTypeOnly) return [];
+      const clause = statement.exportClause;
+      if (clause === undefined || ts.isNamespaceExport(clause)) {
+        reachModule(moduleAt(statement.moduleSpecifier));
+        return [...edges];
+      }
+    }
+    const reachSymbol = (symbol: ts.Symbol | undefined) => {
+      if (symbol === undefined) return;
+      const target = symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+      for (const declaration of target.declarations ?? []) {
+        if (ts.isSourceFile(declaration)) {
+          if (trackedFiles.has(declaration)) reachModule(declaration);
+          continue;
+        }
+        if (!trackedFiles.has(declaration.getSourceFile())) continue;
+        const enclosing = topLevelStatement(declaration);
+        if (enclosing !== undefined && !isTypeDeclaration(enclosing)) edges.add(enclosing);
+      }
+    };
+    const visit = (node: ts.Node): void => {
+      if (isClassExtends(node)) return visit(node.expression);
+      if (ts.isTypeNode(node)) return;
+      if (ts.isIdentifier(node)) return reachSymbol(symbolOf(node));
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword && !isTableEntry(node)) {
+        reachModule(moduleAt(node.arguments[0]));
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(statement);
+    edges.delete(statement);
+    return [...edges];
+  };
+
+  const fileEdges = (sourceFile: ts.SourceFile): readonly Unit[] =>
+    sourceFile.statements.flatMap((statement): Unit[] => {
+      if (ts.isImportDeclaration(statement)) {
+        const target = statement.importClause === undefined ? moduleAt(statement.moduleSpecifier) : undefined;
+        return target === undefined ? [] : [target];
+      }
+      return isEvaluation(statement) ? [statement] : [];
+    });
+
+  const memo = new Map<Unit, readonly Unit[]>();
+  return (unit) => {
+    const cached = memo.get(unit);
+    if (cached !== undefined) return cached;
+    const edges = ts.isSourceFile(unit) ? fileEdges(unit) : statementEdges(unit);
+    memo.set(unit, edges);
+    return edges;
+  };
 }
 
 function wrappersOf(pageFile: string, appDir: string, tracked: ReadonlySet<string>): readonly string[] {
@@ -96,9 +155,12 @@ function wrappersOf(pageFile: string, appDir: string, tracked: ReadonlySet<strin
     .filter((file) => tracked.has(file));
 }
 
-// A screen renders its page, every enclosing layout and template, and whatever those import.
-// A redirect-only screen never renders its wrappers, so it is seeded from its page files alone.
-export function screensByFile({
+export type ScreensOf = (node: ts.Node) => ReadonlySet<RoutePattern>;
+
+// A screen renders its page and every enclosing layout and template (a redirect-only screen, its
+// page alone). Reach then runs over top-level statements: a reached statement reaches the
+// statements declaring the names it references, and evaluating a module reaches its side effects.
+export function screenReach({
   program,
   root,
   table,
@@ -110,31 +172,39 @@ export function screensByFile({
   table: RouteTable;
   files: readonly string[];
   redirectOnly: ReadonlySet<RoutePattern>;
-}): ReadonlyMap<string, ReadonlySet<RoutePattern>> {
+}): ScreensOf {
   const tracked = new Set(files);
-  const graph = importGraph({ program, root, tracked });
-  const seeds = new Map<RoutePattern, string[]>();
+  const edgesOf = referenceGraph({ program, root, tracked });
+  const seeds = new Map<RoutePattern, ts.Statement[]>();
   for (const route of table.routes) {
     if (route.kind !== 'page') continue;
     const wrappers = redirectOnly.has(route.pattern) ? [] : wrappersOf(route.file, table.appDir, tracked);
-    const files = [route.file, ...wrappers];
+    const statements = [route.file, ...wrappers].flatMap(
+      (file) => program.getSourceFile(join(root, file))?.statements ?? [],
+    );
     const existing = seeds.get(route.pattern);
-    if (existing === undefined) seeds.set(route.pattern, files);
-    else existing.push(...files);
+    if (existing === undefined) seeds.set(route.pattern, statements);
+    else existing.push(...statements);
   }
 
-  const screens = new Map<string, Set<RoutePattern>>();
+  const screens = new Map<ts.Statement, Set<RoutePattern>>();
   for (const [pattern, start] of seeds) {
-    const seen = new Set<string>();
-    const queue = [...start];
-    for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
-      if (seen.has(file)) continue;
-      seen.add(file);
-      const patterns = screens.get(file);
-      if (patterns === undefined) screens.set(file, new Set([pattern]));
-      else patterns.add(pattern);
-      queue.push(...(graph.get(file) ?? []));
+    const seen = new Set<Unit>();
+    const queue: Unit[] = [...start];
+    for (let unit = queue.pop(); unit !== undefined; unit = queue.pop()) {
+      if (seen.has(unit)) continue;
+      seen.add(unit);
+      if (!ts.isSourceFile(unit)) {
+        const patterns = screens.get(unit);
+        if (patterns === undefined) screens.set(unit, new Set([pattern]));
+        else patterns.add(pattern);
+      }
+      queue.push(...edgesOf(unit));
     }
   }
-  return screens;
+  const none: ReadonlySet<RoutePattern> = new Set();
+  return (node) => {
+    const statement = topLevelStatement(node);
+    return (statement === undefined ? undefined : screens.get(statement)) ?? none;
+  };
 }
