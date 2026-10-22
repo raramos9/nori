@@ -58,6 +58,7 @@ describe('nori MCP server', () => {
       { route: '/about', outgoing: 1, unresolvedOutgoing: 0 },
     ]);
     expect(listed.screens.every(({ status }) => status === 'inferred')).toBe(true);
+    expect(listed.screens[0]).not.toHaveProperty('sources');
 
     const home = listed.screens[0]!;
     const about = listed.screens[1]!;
