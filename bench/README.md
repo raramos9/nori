@@ -26,3 +26,24 @@ Each app is analyzed twice. `raw` has the three framework adapters off. `adapter
 A cell reads `rate (resolved/internal)`. Internal calls are links and navigations that are not external, same-page, asset, or handler targets. A call counts as resolved only when it resolves from every screen that reaches it. The total row pools calls across apps. The median line is the median of per-app rates.
 
 The held-out report ends with two verdicts against §11. The raw total must reach 50% and the adapters total must reach 60%. A gap between the tuning and held-out rates is the sign of overfitting.
+
+## Precision sample
+
+The rate counts how many calls resolve, not whether they resolve to the right screen. `precision.ts` draws a seeded sample of resolved edges from the tuning apps for hand labelling:
+
+```
+NODE_OPTIONS=--max-old-space-size=8192 pnpm exec tsx bench/precision.ts --out sample.json [--size 100] [--seed 1]
+```
+
+An edge is one source screen, one call site and one target screen, so a link in a shared layout counts once per screen it renders on. Each row has a stable `id`, the source and target patterns, the trigger, and the call's file, line and code. Only tuning apps are sampled; the held-out set stays unread.
+
+`precision/seed1.json` is the first labelled sample (100 edges, seed 1, labelled 2026-10-22). Each edge carries a `verdict` (`correct`, `wrong-source`, `wrong-target`, `unclear`) with the evidence, and wrong edges carry a `cause`. Precision was 60 of 98 decided edges (61%).
+
+| Cause | Edges | Fixable from source |
+| --- | --- | --- |
+| `runtime-guard`: the call only runs under state the screen never has | 15 | No |
+| `redirect-only-page`: the source or target page only calls `redirect()` | 8 | Yes |
+| `import-over-attribution`: a server-action file or lazy registry credits every importer | 7 | Yes |
+| `per-screen-prop`: a prop set differently per screen switches the call or its value | 4 | Hard |
+| `hole-into-catch-all`: a mostly unknown path lands on a root catch-all | 3 | Yes |
+| `both-branches`: the screen fixes which branch of a conditional runs | 1 | Hard |
