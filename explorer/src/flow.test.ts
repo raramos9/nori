@@ -9,6 +9,7 @@ import {
 } from '../../src/graph/model.js';
 import type { ExplorerGraph, ExplorerScreen, ExplorerTarget, ExplorerTransition } from '../../src/explorer/view.js';
 import { indexGraph, matchingScreens, STATUSES, visibleGraph, type Filters } from './flow.js';
+import { layoutGraph } from './layout.js';
 
 const hex = (n: number) => n.toString(16).padStart(16, '0');
 const screen = (n: number, route: string, status: EvidenceStatus = 'inferred'): ExplorerScreen => ({
@@ -94,5 +95,13 @@ describe('matchingScreens', () => {
     const ids = (q: string): ScreenId[] => [...matchingScreens(graph.screens, q)];
     expect(ids('PRIC')).toEqual([pricing.id]);
     expect(ids('  ')).toEqual([]);
+  });
+});
+
+describe('layoutGraph', () => {
+  it('gives every node its own position', () => {
+    const boxes = [...layoutGraph(visibleGraph(graph, all)).values()];
+    expect(boxes).toHaveLength(5);
+    expect(new Set(boxes.map(({ x, y }) => `${x},${y}`)).size).toBe(boxes.length);
   });
 });
