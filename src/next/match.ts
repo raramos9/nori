@@ -13,6 +13,7 @@ export type Resolution =
 export type Matcher = {
   readonly routes: readonly MatchRoute[];
   readonly assets: ReadonlySet<string>;
+  readonly adapters: boolean;
 };
 
 type TargetSegment = { readonly kind: 'text'; readonly value: string } | { readonly kind: 'hole' };
@@ -37,8 +38,9 @@ function dottedFolder(route: RouteFile): string | null {
   return first?.kind === 'static' && first.value.includes('.') ? first.value : null;
 }
 
-function matchRoute(route: RouteFile, hosts: ReadonlySet<string>): MatchRoute {
+function matchRoute(route: RouteFile, hosts: ReadonlySet<string>, adapters: boolean): MatchRoute {
   let segments: readonly MatchSegment[] = route.segments;
+  if (!adapters) return { route, host: null, segments };
   const folder = dottedFolder(route);
   const host = folder !== null && hosts.has(folder) ? folder : null;
   if (host !== null) segments = segments.slice(1);
@@ -50,7 +52,15 @@ function matchRoute(route: RouteFile, hosts: ReadonlySet<string>): MatchRoute {
 }
 
 // A dotted folder with no page under it is a file-like handler (rss.xml, typeset.css), not a hostname.
-export function createMatcher({ table, files }: { table: RouteTable; files: readonly string[] }): Matcher {
+export function createMatcher({
+  table,
+  files,
+  adapters,
+}: {
+  table: RouteTable;
+  files: readonly string[];
+  adapters: boolean;
+}): Matcher {
   const assets = new Set(
     files.filter((file) => file.startsWith(PUBLIC_DIR)).map((file) => `/${file.slice(PUBLIC_DIR.length)}`),
   );
@@ -60,7 +70,7 @@ export function createMatcher({ table, files }: { table: RouteTable; files: read
       return folder === null ? [] : [folder];
     }),
   );
-  return { routes: table.routes.map((route) => matchRoute(route, hosts)), assets };
+  return { routes: table.routes.map((route) => matchRoute(route, hosts, adapters)), assets, adapters };
 }
 
 function segmentMatches(target: readonly TargetSegment[], route: readonly MatchSegment[]): boolean {
@@ -201,7 +211,8 @@ export function resolveTemplate({
     return excluded('asset');
   }
   const target = segments.map(
-    (segment): TargetSegment => (segment.kind === 'text' && BRACKETED.test(segment.value) ? { kind: 'hole' } : segment),
+    (segment): TargetSegment =>
+      matcher.adapters && segment.kind === 'text' && BRACKETED.test(segment.value) ? { kind: 'hole' } : segment,
   );
 
   let hits = matcher.routes.filter((route) => segmentMatches(target, route.segments)).sort(compareSpecificity);

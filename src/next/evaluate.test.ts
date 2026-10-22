@@ -14,11 +14,15 @@ function show(evaluated: Evaluated): Shown {
   return { paths, fromBuilder: evaluated.fromBuilder };
 }
 
-function evaluateIn(files: Readonly<Record<string, string>>, file = 'app/page.tsx'): readonly Shown[] {
+function evaluateIn(
+  files: Readonly<Record<string, string>>,
+  file = 'app/page.tsx',
+  adapters = true,
+): readonly Shown[] {
   const program = createProgram({ root: MEMORY_ROOT, files: memoryFiles(files) });
   const sourceFile = program.getSourceFile(`${MEMORY_ROOT}/${file}`);
   if (sourceFile === undefined) throw new Error(`${file} is not in the program`);
-  const evaluate = createEvaluator(program);
+  const evaluate = createEvaluator(program, { adapters });
   return findNavCalls(sourceFile, file).map((call) => show(evaluate(call.expression)));
 }
 
@@ -106,6 +110,16 @@ describe('createEvaluator', () => {
     expect(
       evaluatePage("declare function build(p: string, v: object): string;\nrouter.push(build('/[team]/settings', {}));"),
     ).toEqual([{ paths: ['/[team]/settings'], fromBuilder: true }]);
+  });
+
+  it('ignores a route-builder literal with adapters off', () => {
+    expect(
+      evaluateIn(
+        { 'app/page.tsx': "declare function buildRoute(p: string): string;\nrouter.push(buildRoute('/[team]/settings'));" },
+        'app/page.tsx',
+        false,
+      ),
+    ).toEqual([{ unknown: 'call' }]);
   });
 
   it('marks an unbound parameter as a passthrough', () => {

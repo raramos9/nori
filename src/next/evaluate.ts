@@ -148,7 +148,10 @@ function componentDeclaration(fn: ts.SignatureDeclaration): ts.Declaration | nul
   return ts.isVariableDeclaration(node.parent) ? node.parent : null;
 }
 
-export function createEvaluator(program: ts.Program): (expression: ts.Expression) => Evaluated {
+export function createEvaluator(
+  program: ts.Program,
+  { adapters }: { readonly adapters: boolean },
+): (expression: ts.Expression) => Evaluated {
   const checker = program.getTypeChecker();
   let jsxSiteIndex: Map<ts.Declaration, ts.JsxAttributes[]> | undefined;
 
@@ -394,6 +397,7 @@ export function createEvaluator(program: ts.Program): (expression: ts.Expression
   }
 
   function routeBuilderLiteral(call: ts.CallExpression): Evaluated | null {
+    if (!adapters) return null;
     for (const argument of call.arguments) {
       const e = strip(argument);
       if (isStringish(e) && ROUTE_BUILDER_ARGUMENT.test(e.text)) return { ...text(e.text), fromBuilder: true };
