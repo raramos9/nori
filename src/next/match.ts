@@ -76,18 +76,19 @@ export function createMatcher({
 function segmentMatches(
   target: readonly TargetSegment[],
   route: readonly MatchSegment[],
-  holes: 'any-segment' | 'dynamic-only',
+  holes: 'any-segment' | 'dynamic-or-catch-all' | 'dynamic-only',
 ): boolean {
+  const restIsText = (i: number) => holes !== 'dynamic-only' || target.slice(i).every((t) => t.kind === 'text');
   const go = (i: number, j: number): boolean => {
     const r = route[j];
     if (r === undefined) return i === target.length;
     switch (r.kind) {
       case 'optional-catch-all':
-        return true;
+        return restIsText(i);
       case 'optional-dynamic':
         return go(i, j + 1) || (i < target.length && go(i + 1, j + 1));
       case 'catch-all':
-        return i < target.length;
+        return i < target.length && restIsText(i);
       case 'dynamic':
         return i < target.length && go(i + 1, j + 1);
       case 'static': {
@@ -116,6 +117,15 @@ function compareSpecificity(a: MatchRoute, b: MatchRoute): number {
     if (difference !== 0) return difference;
   }
   return 0;
+}
+
+// Next tries a static segment before any other, so a route that loses to one never serves the same URL.
+function outranksOnStatic(a: MatchRoute, b: MatchRoute): boolean {
+  const length = Math.max(a.segments.length, b.segments.length);
+  for (let i = 0; i < length; i++) {
+    if (rank(a.segments[i]) !== rank(b.segments[i])) return a.segments[i]?.kind === 'static';
+  }
+  return false;
 }
 
 function cutAtQueryOrHash(template: PathTemplate): PathTemplate {
@@ -235,8 +245,11 @@ export function resolveTemplate({
     const tied = hits.filter((route) => compareSpecificity(route, best) === 0);
     return hostsOf(tied) === 1 ? toScreen(best) : unresolved('ambiguous-route');
   }
-  const viaDynamic = hits.filter((route) => segmentMatches(target, route.segments, 'dynamic-only'));
+  const viaDynamic = hits.filter((route) => segmentMatches(target, route.segments, 'dynamic-or-catch-all'));
   const [chosen] = viaDynamic;
-  if (chosen !== undefined && hostsOf(viaDynamic) === 1) return toScreen(chosen);
+  if (chosen === undefined || hostsOf(viaDynamic) !== 1) return unresolved('ambiguous-route');
+  const fillsDynamic = (route: MatchRoute) => segmentMatches(target, route.segments, 'dynamic-only');
+  const rival = (route: MatchRoute) => fillsDynamic(route) && !outranksOnStatic(chosen, route);
+  if (fillsDynamic(chosen) || !viaDynamic.some(rival)) return toScreen(chosen);
   return unresolved('ambiguous-route');
 }
