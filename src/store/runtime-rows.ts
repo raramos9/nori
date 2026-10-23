@@ -78,6 +78,7 @@ const screenMatchSchema = z.discriminatedUnion('rule', [
 
 const actionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('follow-link'), href: pageUrl, name: z.string().nullable() }),
+  z.object({ kind: z.literal('interact'), page: pageUrl, click: z.string(), fields: z.array(z.string()) }),
 ]);
 
 const redirectsSchema = z.array(z.object({ to: pageUrl, via: z.enum(['http', 'client']) }));

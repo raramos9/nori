@@ -40,8 +40,10 @@ export function triggerCandidates(action: RuntimeAction): NonEmpty<Trigger['kind
   switch (action.kind) {
     case 'follow-link':
       return ['link'];
+    case 'interact':
+      return ['router-push', 'router-replace'];
     default: {
-      const _exhaustive: never = action.kind;
+      const _exhaustive: never = action;
       return _exhaustive;
     }
   }

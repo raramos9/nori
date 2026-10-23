@@ -2,7 +2,22 @@ import type { Origin, PageUrl, Session } from '../graph/model.js';
 
 export type RunStop = 'frontier-exhausted' | 'budget';
 
-export type RuntimeAction = { readonly kind: 'follow-link'; readonly href: PageUrl; readonly name: string | null };
+// Field values are never recorded, only the labels they were typed into.
+export type RuntimeAction =
+  | { readonly kind: 'follow-link'; readonly href: PageUrl; readonly name: string | null }
+  | { readonly kind: 'interact'; readonly page: PageUrl; readonly click: string; readonly fields: readonly string[] };
+
+export type WriteMethod = 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+// The path is an exact pathname on the run's origin.
+export type AllowedRequest = { readonly method: WriteMethod; readonly path: string };
+
+export type Interaction = {
+  readonly page: PageUrl;
+  readonly fill: readonly { readonly label: string; readonly value: string }[];
+  readonly click: string;
+  readonly allow: readonly AllowedRequest[];
+};
 
 export type Redirect = { readonly to: PageUrl; readonly via: 'http' | 'client' };
 

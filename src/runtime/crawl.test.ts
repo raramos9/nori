@@ -27,6 +27,27 @@ describe('decideRequest', () => {
   ])('%s %s is %s', (method, url, expected) => {
     expect(decideRequest(origin, method, url)).toBe(expected);
   });
+
+  describe('with allow rules', () => {
+    const allow = [
+      { method: 'POST', path: '/api/session' },
+      { method: 'DELETE', path: '/api/session' },
+    ] as const;
+    it.each([
+      ['POST', 'http://127.0.0.1:3000/api/session', 'allowlisted'],
+      ['post', 'http://127.0.0.1:3000/api/session?x=1', 'allowlisted'],
+      ['DELETE', 'http://127.0.0.1:3000/api/session', 'allowlisted'],
+      ['PUT', 'http://127.0.0.1:3000/api/session', 'blocked'],
+      ['POST', 'http://127.0.0.1:3000/api/session/2', 'blocked'],
+      ['POST', 'http://127.0.0.1:3000/api', 'blocked'],
+      ['POST', 'http://localhost:3000/api/session', 'blocked'],
+      ['POST', 'https://example.com/api/session', 'blocked'],
+      ['GET', 'http://127.0.0.1:3000/api/session', 'allowed'],
+      ['GET', 'https://example.com/api/session', 'blocked'],
+    ])('%s %s is %s', (method, url, expected) => {
+      expect(decideRequest(origin, method, url, allow)).toBe(expected);
+    });
+  });
 });
 
 describe('followLinks', () => {

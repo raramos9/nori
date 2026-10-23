@@ -7,6 +7,7 @@ import { NoriError } from '../errors.js';
 import { type Origin, type PageUrl, parsePageUrl, type Session } from '../graph/model.js';
 import { type EgressDecision, startEgressProxy } from './egress-proxy.js';
 import type {
+  AllowedRequest,
   CaptureKey,
   CrawledCapture,
   CrawledNavigation,
@@ -25,7 +26,7 @@ const SETTLE_CAP_MS = 5_000;
 const QUIET_WINDOW_MS = 500;
 const POLL_MS = 100;
 
-export type RequestDecision = 'allowed' | 'blocked' | 'internal';
+export type RequestDecision = 'allowed' | 'allowlisted' | 'blocked' | 'internal';
 
 // A connection the egress proxy turned away. Most are Chrome's own background traffic, which no page
 // asked for, so they are logged apart from the page requests the policy blocked.
@@ -50,12 +51,23 @@ function schemeOf(url: string): string {
   }
 }
 
-// The whole isolation policy: the run's own origin, read-only methods, nothing else.
-export function decideRequest(origin: Origin, method: string, url: string): RequestDecision {
+function pathnameOf(url: string): string | null {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return null;
+  }
+}
+
+// The whole isolation policy: the run's own origin and read-only methods, plus the exact write
+// requests an interaction names up front.
+export function decideRequest(origin: Origin, method: string, url: string, allow: readonly AllowedRequest[] = []): RequestDecision {
   if (INTERNAL_SCHEMES.has(schemeOf(url))) return 'internal';
+  if (originOf(url) !== origin) return 'blocked';
   const verb = method.toUpperCase();
-  if (verb !== 'GET' && verb !== 'HEAD') return 'blocked';
-  return originOf(url) === origin ? 'allowed' : 'blocked';
+  if (verb === 'GET' || verb === 'HEAD') return 'allowed';
+  const path = pathnameOf(url);
+  return allow.some((rule) => rule.method === verb && rule.path === path) ? 'allowlisted' : 'blocked';
 }
 
 export function pageUrlOrNull(origin: Origin, raw: string): PageUrl | null {
@@ -70,7 +82,9 @@ export function pageUrlOrNull(origin: Origin, raw: string): PageUrl | null {
 
 export type RawLink = { readonly href: string; readonly name: string | null };
 
-export function followLinks(origin: Origin, links: readonly RawLink[]): RuntimeAction[] {
+type FollowLink = Extract<RuntimeAction, { readonly kind: 'follow-link' }>;
+
+export function followLinks(origin: Origin, links: readonly RawLink[]): FollowLink[] {
   const byHref = new Map<PageUrl, string | null>();
   for (const link of links) {
     const href = pageUrlOrNull(origin, link.href);
@@ -108,7 +122,7 @@ type NetworkEntry = { readonly method: string; readonly url: string; readonly de
 
 type ActionEntry = {
   readonly seq: number;
-  readonly start: { readonly kind: 'entry' } | { readonly kind: 'action'; readonly from: CaptureKey; readonly href: PageUrl; readonly name: string | null };
+  readonly start: { readonly kind: 'entry' } | { readonly kind: 'action'; readonly from: CaptureKey; readonly action: RuntimeAction };
   readonly requested: PageUrl;
   readonly chain: readonly PageUrl[];
   readonly landing: { readonly capture: CaptureKey; readonly url: PageUrl | null } | { readonly error: string };
@@ -152,7 +166,7 @@ export class RunRecorder {
 
   counts(): { allowed: number; blocked: number } {
     const count = (decision: LoggedDecision) => this.network.filter((entry) => entry.decision === decision).length;
-    return { allowed: count('allowed'), blocked: count('blocked') };
+    return { allowed: count('allowed') + count('allowlisted'), blocked: count('blocked') };
   }
 
   allCaptures(): readonly CrawledCapture[] {
@@ -230,7 +244,12 @@ export async function launchIsolatedBrowser({ origin, recorder }: { origin: Orig
 
 export async function openContext(
   browser: Browser,
-  args: { readonly origin: Origin; readonly storageStatePath?: string | undefined; readonly recorder: RunRecorder },
+  args: {
+    readonly origin: Origin;
+    readonly storageStatePath?: string | undefined;
+    readonly recorder: RunRecorder;
+    readonly allow?: readonly AllowedRequest[];
+  },
 ): Promise<BrowserContext> {
   const context = await browser.newContext({
     serviceWorkers: 'block',
@@ -238,7 +257,7 @@ export async function openContext(
   });
   await context.route('**/*', async (route) => {
     const request = route.request();
-    const decision = decideRequest(args.origin, request.method(), request.url());
+    const decision = decideRequest(args.origin, request.method(), request.url(), args.allow);
     args.recorder.logRequest(request, decision);
     if (decision === 'blocked') return route.abort('blockedbyclient');
     return route.continue();
@@ -324,7 +343,7 @@ type Loaded = {
   readonly redirects: readonly Redirect[];
   readonly landing: NavigationLanding;
   readonly landingUrl: PageUrl | null;
-  readonly links: readonly RuntimeAction[];
+  readonly links: readonly FollowLink[];
   readonly consoleErrors: readonly string[];
 };
 
@@ -407,10 +426,7 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
       });
       recorder.logAction({
         seq: navigations.length - 1,
-        start:
-          pending.start.kind === 'entry'
-            ? { kind: 'entry' }
-            : { kind: 'action', from: pending.start.from, href: pending.start.action.href, name: pending.start.action.name },
+        start: pending.start,
         requested: pending.requested,
         chain: [pending.requested, ...loaded.redirects.map((redirect) => redirect.to)],
         landing: loaded.landing.kind === 'aborted' ? { error: loaded.landing.error } : { capture: loaded.landing.capture, url: loaded.landingUrl },

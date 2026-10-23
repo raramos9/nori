@@ -106,8 +106,10 @@ function actionKey(action: RuntimeAction): string {
   switch (action.kind) {
     case 'follow-link':
       return `${action.kind} ${action.href}`;
+    case 'interact':
+      return `${action.kind} ${action.click}`;
     default: {
-      const _exhaustive: never = action.kind;
+      const _exhaustive: never = action;
       return _exhaustive;
     }
   }
