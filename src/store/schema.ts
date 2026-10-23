@@ -56,6 +56,45 @@ export interface ObservationsTable {
   subject_kind: string;
   subject_id: string;
   verdict: string;
+  match: string | null;
+}
+
+export interface RunsTable {
+  id: string;
+  application_id: string;
+  build_id: string;
+  origin: string;
+  session_kind: string;
+  session_label: string;
+  started_at: string;
+  finished_at: string;
+  stop: string;
+  crawler_version: string;
+  reconciler_version: string;
+  requests_allowed: number;
+  requests_blocked: number;
+}
+
+export interface CapturesTable {
+  evidence_id: string;
+  run_id: string;
+  url: string;
+  http_status: number;
+  screenshot_path: string;
+  dom_path: string;
+}
+
+export interface NavigationsTable {
+  evidence_id: string;
+  run_id: string;
+  start_kind: string;
+  from_capture_id: string | null;
+  action_kind: string | null;
+  action: string | null;
+  requested_url: string;
+  redirects: string;
+  landing_capture_id: string;
+  log_seq: number;
 }
 
 export interface Database {
@@ -66,6 +105,9 @@ export interface Database {
   transitions: TransitionsTable;
   evidence: EvidenceTable;
   observations: ObservationsTable;
+  runs: RunsTable;
+  captures: CapturesTable;
+  navigations: NavigationsTable;
 }
 
 export type GraphDb = Kysely<Database>;

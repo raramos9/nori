@@ -3,21 +3,33 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { applicationId, buildId, evidenceId, screenId, stateId, transitionId } from '../graph/ids.js';
+import { Kysely, SqliteDialect } from 'kysely';
+import { Migrator } from 'kysely/migration';
+import { applicationId, buildId, evidenceId, runId, screenId, stateId, transitionId } from '../graph/ids.js';
 import {
   DEFAULT_STATE_KEY,
+  parseArtifactPath,
   parseCommitSha,
+  parseOrigin,
+  parsePageUrl,
   parseRoutePattern,
   UNRESOLVED_REASONS,
   verdictOf,
   type Build,
+  type CaptureEvidence,
+  type NavigationEvidence,
+  type RunIngestion,
+  type Session,
+  type TransitionMatch,
   type StaticEvidence,
   type Observation,
   type Screen,
   type StaticIngestion,
   type Transition,
 } from '../graph/model.js';
+import { runDirectories } from '../runtime/layout.js';
 import { GraphStore } from './graph-store.js';
+import { MIGRATIONS } from './migrations.js';
 
 const rootPath = '/repo/web';
 const SOURCE_HASH = 'f'.repeat(64);
@@ -126,6 +138,9 @@ const TABLES = [
   'transitions',
   'evidence',
   'observations',
+  'runs',
+  'captures',
+  'navigations',
 ] as const;
 
 function countRows(path: string): Record<string, number> {
@@ -166,6 +181,9 @@ describe('GraphStore', () => {
       transitions: 2,
       evidence: 4,
       observations: 4,
+      runs: 0,
+      captures: 0,
+      navigations: 0,
     });
   });
 
@@ -275,3 +293,310 @@ describe('GraphStore', () => {
     );
   });
 });
+
+const origin = parseOrigin('http://localhost:3000');
+const pageUrl = (path: string) => parsePageUrl(origin, path);
+
+type RunFixture = { readonly ingestion: RunIngestion; readonly capture: (path: string) => CaptureEvidence };
+
+function runFor(
+  base: StaticIngestion,
+  session: Session,
+  startedAt: Date,
+  pages: readonly { readonly path: string; readonly httpStatus: number }[],
+): RunFixture {
+  const id = runId({ buildId: base.build.id, origin, session, startedAt });
+  const sealed = runDirectories(app.id, id).sealed;
+  const captures = pages.map(({ path, httpStatus }): CaptureEvidence => {
+    const identity = { kind: 'capture', buildId: base.build.id, runId: id, url: pageUrl(path) } as const;
+    const evidenceIdValue = evidenceId(identity);
+    return {
+      ...identity,
+      id: evidenceIdValue,
+      httpStatus,
+      screenshot: parseArtifactPath(join(sealed, 'captures', `${evidenceIdValue}.png`)),
+      dom: parseArtifactPath(join(sealed, 'captures', `${evidenceIdValue}.html`)),
+    };
+  });
+  const capture = (path: string) => {
+    const found = captures.find((c) => c.url === pageUrl(path));
+    if (found === undefined) throw new Error(`no capture of ${path}`);
+    return found;
+  };
+  return {
+    capture,
+    ingestion: {
+      run: {
+        id,
+        applicationId: app.id,
+        buildId: base.build.id,
+        origin,
+        session,
+        startedAt,
+        finishedAt: new Date(startedAt.getTime() + 1000),
+        stop: 'frontier-exhausted',
+        crawlerVersion: '1',
+        reconcilerVersion: '1',
+        requests: { allowed: 3, blocked: 0 },
+      },
+      captures: captures.map((evidence) => {
+        const pattern = parseRoutePattern(new URL(evidence.url).pathname);
+        return {
+          evidence,
+          match:
+            evidence.httpStatus >= 500
+              ? { verdict: 'contradicts', rule: 'server-error', url: evidence.url, pattern, httpStatus: evidence.httpStatus }
+              : { verdict: 'supports', rule: 'rendered', url: evidence.url, pattern },
+        };
+      }),
+      navigations: [],
+      created: [],
+      report: [],
+    },
+  };
+}
+
+function follow(
+  fixture: RunFixture,
+  from: string,
+  to: string,
+  logSeq: number,
+): { evidence: NavigationEvidence; match: Omit<TransitionMatch, 'rule'> } {
+  const source = fixture.capture(from);
+  const landing = fixture.capture(to);
+  const identity = {
+    kind: 'navigation',
+    buildId: source.buildId,
+    runId: source.runId,
+    requested: landing.url,
+    start: {
+      kind: 'action',
+      from: { evidenceId: source.id, url: source.url },
+      action: { kind: 'follow-link', href: landing.url, name: null },
+    },
+  } as const;
+  const { url, httpStatus, screenshot, dom } = landing;
+  return {
+    evidence: { ...identity, id: evidenceId(identity), redirects: [], landing: { url, httpStatus, screenshot, dom, evidenceId: landing.id }, logSeq },
+    match: {
+      verdict: 'supports',
+      sourceUrl: source.url,
+      sourcePattern: parseRoutePattern(from),
+      targetUrl: landing.url,
+      targetPattern: parseRoutePattern(to),
+      skipped: [],
+      triggerCandidates: ['link'],
+    },
+  };
+}
+
+describe('GraphStore runs', () => {
+  const [a, b] = [screenFor('/a'), screenFor('/b')];
+  const staticLink = makeTransition(a, { kind: 'resolved', stateId: defaultState(b) });
+  const runtimeLink = makeTransition(b, { kind: 'resolved', stateId: defaultState(a) });
+  const base = withTransitions(ingestionFor('a', ['/a', '/b']), [staticLink]);
+
+  function anonymousRun(): RunIngestion {
+    const fixture = runFor(base, { kind: 'anonymous' }, new Date('2026-02-01T00:00:00.000Z'), [
+      { path: '/a', httpStatus: 200 },
+      { path: '/b', httpStatus: 200 },
+    ]);
+    const matched = follow(fixture, '/a', '/b', 1);
+    const created = follow(fixture, '/b', '/a', 2);
+    return {
+      ...fixture.ingestion,
+      navigations: [
+        {
+          evidence: matched.evidence,
+          matches: [{ transitionId: staticLink.id, match: { ...matched.match, rule: 'action-matched-static' } }],
+        },
+        {
+          evidence: created.evidence,
+          matches: [{ transitionId: runtimeLink.id, match: { ...created.match, rule: 'action-runtime-only' } }],
+        },
+      ],
+      created: [{ ...runtimeLink, target: { kind: 'resolved', stateId: defaultState(a) } }],
+    };
+  }
+
+  function signedInRun(): RunIngestion {
+    return runFor(base, { kind: 'storage-state', label: 'signed-in' }, new Date('2026-02-02T00:00:00.000Z'), [
+      { path: '/a', httpStatus: 500 },
+    ]).ingestion;
+  }
+
+  it('ingesting a run twice leaves every table as ingesting it once', async () => {
+    const { store, path } = await openFile();
+    await store.ingestStatic(base);
+    await store.ingestRun(anonymousRun());
+    const once = countRows(path);
+    await store.ingestRun(anonymousRun());
+    expect(countRows(path)).toEqual(once);
+    expect(once).toMatchObject({ runs: 1, captures: 2, navigations: 2, transitions: 2, evidence: 7, observations: 7 });
+  });
+
+  it('loads runs, captures with absolute artifact paths and runtime-only transitions', async () => {
+    const store = await openMemory();
+    await store.ingestStatic(base);
+    const run = anonymousRun();
+    await store.ingestRun(run);
+
+    const graph = await store.loadBuildGraph({ buildId: base.build.id });
+    expect(graph?.runs).toEqual([run.run]);
+    const screenA = graph?.screens.find((s) => s.screen.id === a.id);
+    expect(screenA?.status).toBe('observed');
+    const captured = screenA?.observations.flatMap((o) => (o.evidence.kind === 'capture' ? [o.evidence] : []));
+    expect(captured).toEqual([run.captures[0]?.evidence]);
+    expect(captured?.[0]?.screenshot.startsWith(runDirectories(app.id, run.run.id).sealed)).toBe(true);
+
+    const byId = new Map(graph?.transitions.map((t) => [t.transition.id, t]));
+    expect(byId.get(staticLink.id)?.status).toBe('observed');
+    expect(byId.get(runtimeLink.id)?.transition).toEqual(runtimeLink);
+    expect(byId.get(runtimeLink.id)?.status).toBe('observed');
+    expect(byId.get(runtimeLink.id)?.observations).toEqual([
+      { evidence: run.navigations[1]?.evidence, match: run.navigations[1]?.matches[0]?.match },
+    ]);
+  });
+
+  it('keeps a run of a second session beside the first and lets its 5xx fail the screen', async () => {
+    const store = await openMemory();
+    await store.ingestStatic(base);
+    const first = anonymousRun();
+    const second = signedInRun();
+    await store.ingestRun(first);
+    await store.ingestRun(second);
+
+    const graph = await store.loadBuildGraph({ buildId: base.build.id });
+    expect(graph?.runs.map((run) => run.session)).toEqual([
+      { kind: 'anonymous' },
+      { kind: 'storage-state', label: 'signed-in' },
+    ]);
+    const screenA = graph?.screens.find((s) => s.screen.id === a.id);
+    expect(screenA?.observations.map((o) => o.evidence.kind).sort()).toEqual(['capture', 'capture', 'static']);
+    expect(screenA?.status).toBe('failed');
+    expect(graph?.screens.find((s) => s.screen.id === b.id)?.status).toBe('observed');
+  });
+
+  it('refuses artifacts outside the sealed run directory and runs of an unknown build', async () => {
+    const store = await openMemory();
+    await expect(store.ingestRun(anonymousRun())).rejects.toThrow(/must be ingested first/);
+    await store.ingestStatic(base);
+    const run = anonymousRun();
+    const [first, ...rest] = run.captures;
+    if (first === undefined) throw new Error('fixture has no capture');
+    const stray = { ...first, evidence: { ...first.evidence, dom: parseArtifactPath('/tmp/elsewhere.html') } };
+    await expect(store.ingestRun({ ...run, captures: [stray, ...rest] })).rejects.toThrow(/not inside the sealed/);
+  });
+
+  it('rejects a navigation row whose start disagrees with its source and action', async () => {
+    const { store, path } = await openFile();
+    await store.ingestStatic(base);
+    const run = anonymousRun();
+    await store.ingestRun(run);
+    const sqlite = new Database(path);
+    try {
+      expect(() =>
+        sqlite.prepare("UPDATE navigations SET start_kind = 'entry' WHERE log_seq = 1").run(),
+      ).toThrow(/CHECK constraint failed/);
+      expect(() => sqlite.prepare('UPDATE navigations SET action = NULL WHERE log_seq = 1').run()).toThrow(
+        /CHECK constraint failed/,
+      );
+    } finally {
+      sqlite.close();
+    }
+  });
+});
+
+describe('migration 002', () => {
+  it('migrates a database created at 001 and loads its static build unchanged', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nori-store-'));
+    tempDirs.push(dir);
+    const path = join(dir, 'graph.db');
+    const [a, b] = [screenFor('/a'), screenFor('/b')];
+    const input = withTransitions(ingestionFor('a', ['/a', '/b']), [
+      makeTransition(a, { kind: 'resolved', stateId: defaultState(b) }),
+      makeTransition(a, { kind: 'unresolved', reason: 'dynamic-expression', expression: 'href' }, { kind: 'router-push' }),
+    ]);
+
+    const initial = MIGRATIONS['001_initial'];
+    if (initial === undefined) throw new Error('001_initial is missing');
+    const old = new Kysely<unknown>({ dialect: new SqliteDialect({ database: new Database(path) }) });
+    const migrated = await new Migrator({
+      db: old,
+      provider: { getMigrations: async () => ({ '001_initial': initial }) },
+    }).migrateToLatest();
+    await old.destroy();
+    expect(migrated.error).toBeUndefined();
+    writeAt001(path, input);
+
+    const store = await GraphStore.open({ path });
+    stores.push(store);
+    const fresh = await openMemory();
+    await fresh.ingestStatic(input);
+    const loaded = await store.loadBuildGraph({ buildId: input.build.id });
+    expect(loaded).toEqual(await fresh.loadBuildGraph({ buildId: input.build.id }));
+    expect(loaded?.transitions).toHaveLength(2);
+    expect(loaded?.runs).toEqual([]);
+  });
+});
+
+function writeAt001(path: string, ingestion: StaticIngestion): void {
+  const sqlite = new Database(path);
+  const insert = (table: string, row: Record<string, string | number | null>) => {
+    const columns = Object.keys(row);
+    sqlite
+      .prepare(`INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`)
+      .run(...Object.values(row));
+  };
+  try {
+    const { application, build: b } = ingestion;
+    insert('applications', { id: application.id, root_path: application.rootPath, framework: application.framework });
+    insert('builds', {
+      id: b.id,
+      application_id: b.applicationId,
+      commit_sha: b.commitSha,
+      source_hash: b.sourceHash,
+      branch: b.branch,
+      analyzer_version: b.analyzerVersion,
+      created_at: b.createdAt.toISOString(),
+    });
+    for (const screen of ingestion.screens) {
+      insert('screens', { id: screen.id, application_id: screen.applicationId, route_pattern: screen.routePattern });
+      insert('ui_states', { id: defaultState(screen), screen_id: screen.id, key: DEFAULT_STATE_KEY });
+    }
+    for (const t of ingestion.transitions) {
+      insert('transitions', {
+        id: t.id,
+        source_state_id: t.sourceStateId,
+        trigger_kind: t.trigger.kind,
+        target_kind: t.target.kind,
+        target_state_id: t.target.kind === 'resolved' ? t.target.stateId : null,
+        unresolved_reason: t.target.kind === 'unresolved' ? t.target.reason : null,
+        unresolved_expression: t.target.kind === 'unresolved' ? t.target.expression : null,
+      });
+    }
+    for (const e of ingestion.evidence) {
+      insert('evidence', {
+        id: e.id,
+        build_id: e.buildId,
+        kind: e.kind,
+        extractor: e.extractor,
+        span_file: e.span.file,
+        span_start_line: e.span.start.line,
+        span_start_column: e.span.start.column,
+        span_end_line: e.span.end.line,
+        span_end_column: e.span.end.column,
+      });
+    }
+    for (const o of ingestion.observations) {
+      insert('observations', {
+        evidence_id: o.evidenceId,
+        subject_kind: o.subject.kind,
+        subject_id: o.subject.id,
+        verdict: o.verdict,
+      });
+    }
+  } finally {
+    sqlite.close();
+  }
+}
