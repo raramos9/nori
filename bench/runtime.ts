@@ -136,6 +136,17 @@ function signedInStorageState(url: string): StorageState {
   return { cookies: [cookie('uid', 'u_1'), cookie('name', 'Ada')], origins: [] };
 }
 
+const DEMO_PASSWORD = 'correct-horse-battery';
+
+const DEMO_INTERACTIONS = {
+  interactions: [
+    { page: '/login', fill: { Email: 'demo@example.com', Password: DEMO_PASSWORD }, click: 'Log in', allow: ['POST /api/session'] },
+    { page: '/signup', fill: { 'Work email': 'demo@example.com', Password: DEMO_PASSWORD }, click: 'Create account', allow: ['POST /api/account'] },
+    { page: '/projects/new', fill: { 'Project name': 'Apollo' }, click: 'Create project', allow: ['POST /api/projects'] },
+    { page: '/projects/apollo', click: 'Sign out', allow: ['DELETE /api/session'] },
+  ],
+};
+
 async function main(): Promise<number> {
   const { values } = parseArgs({
     options: { cache: { type: 'string' }, 'keep-alive': { type: 'boolean', default: false } },
@@ -160,11 +171,14 @@ async function main(): Promise<number> {
   try {
     const storageState = join(noriHome ?? cacheDir, 'signed-in.json');
     await writeFile(storageState, JSON.stringify(signedInStorageState(server.url)));
+    const interactionsFile = join(noriHome ?? cacheDir, 'interactions.json');
+    await writeFile(interactionsFile, JSON.stringify(DEMO_INTERACTIONS));
     const report = await verify({
       path: dir,
       url: server.url,
       storageStates: [{ label: 'signed-in', file: storageState }],
       anonymous: true,
+      interactionsFile,
       budgets: DEFAULT_BUDGETS,
     });
     process.stdout.write(`${formatVerify(report)}\n`);

@@ -73,4 +73,4 @@ An edge is one source screen, one call site and one target screen, so a link in 
 pnpm exec tsx bench/runtime.ts [--cache <dir>] [--keep-alive]
 ```
 
-`--keep-alive` prints the server URL and waits for Ctrl-C. The server's whole process group is killed on exit. `nori verify` is not wired in yet, so the baseline is 0 observed. The scoring in `runtime-score.ts` is pure and tested by `runtime.test.ts`.
+`--keep-alive` prints the server URL and waits for Ctrl-C. The server's whole process group is killed on exit. It runs `nori verify` for an anonymous and a signed-in session, with an interactions file next to the signed-in storage state: the login, signup and new-project form submits and the sign-out click, each allowed exactly one write request. Without it the run observes 75 of 79; the four missing edges are driven by those writes. The scoring in `runtime-score.ts` is pure and tested by `runtime.test.ts`.
