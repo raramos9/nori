@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -38,13 +38,15 @@ describe('crawl interactions against a live browser', () => {
         );
       case '/done':
         return res.end(html('done'));
+      case '/plain':
+        return res.end(html('<form><label>Password <input name="password" type="password"></label><button>Log in</button></form>'));
       case '/idle':
         return res.end(html('<button type="button">Nothing</button>'));
       case '/private':
         res.writeHead(302, { location: '/form' });
         return res.end();
       default:
-        return res.end(html('<a href="/form">form</a>'));
+        return res.end(html(req.url?.startsWith('/plain') ? 'plain' : '<a href="/form">form</a>'));
     }
   });
 
@@ -95,5 +97,29 @@ describe('crawl interactions against a live browser', () => {
     expect(actions).not.toContain(SECRET);
     expect(actions).toMatch(/"outcome":"skipped".*landed on/);
     expect(actions).toMatch(/"outcome":"failed"/);
+  }, 90_000);
+
+  it('refuses a request whose url carries a filled value, and records nothing of it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nori-leak-'));
+    const page = (path: string) => parsePageUrl(origin, path);
+    const result = await crawlSite({
+      origin,
+      session: { kind: 'anonymous' },
+      seeds: [page('/')],
+      budgets: { maxCaptures: 20, maxNavigations: 20, maxMillis: 60_000 },
+      dir,
+      interactions: [
+        { page: page('/plain'), fill: [{ label: 'Password', value: SECRET }], click: 'Log in', allow: [{ method: 'POST', path: '/api/ok' }] },
+      ],
+    });
+
+    expect(result.navigations.filter(({ start }) => start.kind === 'action' && start.action.kind === 'interact')).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain(SECRET);
+    const files = ['network.ndjson', 'actions.ndjson'].map((name) => readFileSync(join(dir, name), 'utf8'));
+    for (const file of files) expect(file).not.toContain(SECRET);
+    for (const name of readdirSync(join(dir, 'captures'))) expect(readFileSync(join(dir, 'captures', name)).includes(SECRET)).toBe(false);
+    expect(files[0]).toContain('"decision":"blocked"');
+    expect(files[0]).toContain('password=%5Bredacted%5D');
+    expect(files[1]).toContain('"outcome":"failed","reason":"the form put a filled value in a url"');
   }, 90_000);
 });

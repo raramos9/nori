@@ -72,6 +72,58 @@ export function decideRequest(origin: Origin, method: string, url: string, allow
   return allow.some((rule) => rule.method === verb && rule.path === path) ? 'allowlisted' : 'blocked';
 }
 
+const REDACTED = '[redacted]';
+const LONG_SECRET = 8;
+
+function decoded(part: string): string {
+  try {
+    return decodeURIComponent(part);
+  } catch {
+    return part;
+  }
+}
+
+// Short values only count when they are a whole parameter or path segment, so a value like "a" does not
+// flag every URL; a long value is distinctive enough to count anywhere in the URL.
+export function carriesValue(url: string, values: readonly string[]): boolean {
+  if (values.length === 0) return false;
+  const whole = new Set<string>();
+  try {
+    const parsed = new URL(url);
+    for (const [, value] of parsed.searchParams) whole.add(value);
+    for (const segment of parsed.pathname.split('/')) whole.add(decoded(segment));
+    whole.add(decoded(parsed.hash.slice(1)));
+  } catch {
+    return false;
+  }
+  return values.some(
+    (value) => whole.has(value) || (value.length >= LONG_SECRET && (url.includes(value) || url.includes(encodeURIComponent(value)))),
+  );
+}
+
+export function redactValues(url: string, values: readonly string[]): string {
+  let out: string;
+  try {
+    const parsed = new URL(url);
+    parsed.username = '';
+    parsed.password = '';
+    parsed.hash = '';
+    for (const [name, value] of [...parsed.searchParams]) if (values.includes(value)) parsed.searchParams.set(name, REDACTED);
+    parsed.pathname = parsed.pathname
+      .split('/')
+      .map((segment) => (values.includes(decoded(segment)) ? REDACTED : segment))
+      .join('/');
+    out = parsed.href;
+  } catch {
+    out = '[unparseable url]';
+  }
+  for (const value of values) {
+    if (value.length < LONG_SECRET) continue;
+    out = out.split(value).join(REDACTED).split(encodeURIComponent(value)).join(REDACTED);
+  }
+  return out;
+}
+
 export function pageUrlOrNull(origin: Origin, raw: string): PageUrl | null {
   let url: URL;
   try {
@@ -158,6 +210,10 @@ export class RunRecorder {
     const entry: NetworkEntry = { method: request.method(), url: request.url(), decision };
     this.network.push(entry);
     this.byRequest.set(request, entry);
+  }
+
+  logLeakedRequest(request: Request, redactedUrl: string): void {
+    this.network.push({ method: request.method(), url: redactedUrl, decision: 'blocked' });
   }
 
   logRefusedConnection({ method, target }: EgressDecision): void {
@@ -258,6 +314,8 @@ export async function openContext(
     readonly storageStatePath?: string | undefined;
     readonly recorder: RunRecorder;
     readonly allow?: readonly AllowedRequest[];
+    readonly secrets?: readonly string[];
+    readonly onLeak?: () => void;
   },
 ): Promise<BrowserContext> {
   const context = await browser.newContext({
@@ -266,6 +324,12 @@ export async function openContext(
   });
   await context.route('**/*', async (route) => {
     const request = route.request();
+    const secrets = args.secrets ?? [];
+    if (carriesValue(request.url(), secrets)) {
+      args.recorder.logLeakedRequest(request, redactValues(request.url(), secrets));
+      args.onLeak?.();
+      return route.abort('blockedbyclient');
+    }
     const decision = decideRequest(args.origin, request.method(), request.url(), args.allow);
     args.recorder.logRequest(request, decision);
     if (decision === 'blocked') return route.abort('blockedbyclient');
@@ -284,6 +348,8 @@ const LINKS_SCRIPT = `Array.from(document.querySelectorAll('a[href]'))
     name: (a.getAttribute('aria-label') || a.textContent || a.getAttribute('title') || '').replace(/\\s+/g, ' ').trim() || null,
   }))`;
 const linksSchema = z.array(z.object({ href: z.string(), name: z.string().nullable() }));
+
+class LeakedValue extends Error {}
 
 class PageWatch {
   navigatedUrls: string[] = [];
@@ -460,11 +526,17 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
       }
       const fields = interaction.fill.map(({ label }) => label);
       const summary = { page: interaction.page, click: interaction.click, fields };
+      const secrets = interaction.fill.map(({ value }) => value).filter((value) => value !== '');
+      let leaked = false;
       const interactionContext = await openContext(browser, {
         origin,
         storageStatePath: options.storageStatePath,
         recorder,
         allow: interaction.allow,
+        secrets,
+        onLeak: () => {
+          leaked = true;
+        },
       });
       try {
         const interactionPage = await interactionContext.newPage();
@@ -490,6 +562,9 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
         interactionWatch.reset();
         await interactionPage.getByRole('button', { name: interaction.click, exact: true }).click({ timeout: LOCATOR_TIMEOUT_MS });
         await settle(interactionPage, interactionWatch);
+
+        const urlsSeen = [interactionPage.url(), ...interactionWatch.navigatedUrls];
+        if (leaked || urlsSeen.some((url) => carriesValue(url, secrets))) throw new LeakedValue();
 
         const landingUrl = pageUrlOrNull(origin, interactionPage.url());
         if (landingUrl === null) throw new Error(`left the origin: ${interactionPage.url()}`);
@@ -540,7 +615,12 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
           consoleErrors,
         });
       } catch (error) {
-        const reason = error instanceof Error ? (error.message.split('\n')[0] ?? 'unknown error') : String(error);
+        const reason =
+          leaked || error instanceof LeakedValue
+            ? 'the form put a filled value in a url'
+            : error instanceof Error
+              ? (error.message.split('\n')[0] ?? 'unknown error')
+              : String(error);
         recorder.logAction({ interaction: summary, outcome: 'failed', reason });
       } finally {
         await interactionContext.close();
