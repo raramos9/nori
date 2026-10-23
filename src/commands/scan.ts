@@ -1,6 +1,5 @@
 import { mkdir } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { parseArgs } from 'node:util';
 import { applicationId, buildId } from '../graph/ids.js';
 import type { Application, ApplicationId, Build, BuildGraph, StaticIngestion } from '../graph/model.js';
@@ -9,16 +8,10 @@ import { navigationIngestion, type CallOutcome } from '../ingest/navigation.js';
 import { screensIngestion } from '../ingest/screens.js';
 import { discoverProject } from '../next/project.js';
 import { discoverRoutes } from '../next/routes.js';
+import { stateDatabasePath } from '../runtime/layout.js';
 import { GraphStore } from '../store/graph-store.js';
 import { analyzerVersion as currentAnalyzerVersion } from '../version.js';
 import type { Command } from './command.js';
-
-const DATABASE_FILE = 'graph.db';
-
-export function stateDatabasePath(applicationId: ApplicationId): string {
-  const home = process.env.NORI_HOME;
-  return join(home !== undefined && home !== '' ? home : join(homedir(), '.nori'), 'apps', applicationId, DATABASE_FILE);
-}
 
 export type Analysis = {
   readonly root: string;

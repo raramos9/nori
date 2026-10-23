@@ -16,7 +16,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { NoriError } from '../errors.js';
 import { applicationId } from '../graph/ids.js';
 import { verdictOf } from '../graph/model.js';
-import { formatScan, scan, stateDatabasePath } from './scan.js';
+import { stateDatabasePath } from '../runtime/layout.js';
+import { formatScan, scan } from './scan.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const tempDirs: string[] = [];
