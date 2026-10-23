@@ -1,4 +1,4 @@
-import type { BuildGraph, EvidenceStatus, StateId, TransitionTarget } from '../src/graph/model.js';
+import type { EvidenceStatus, StateId, TransitionTarget } from '../src/graph/model.js';
 
 export type Expected = {
   readonly edges: readonly { readonly from: string; readonly to: string }[];
@@ -26,7 +26,7 @@ export type RuntimeScore = {
 
 const edgeKey = (from: string, to: string) => `${from} -> ${to}`;
 
-export function score(graph: ScorableGraph | BuildGraph, expected: Expected): RuntimeScore {
+export function score(graph: ScorableGraph, expected: Expected): RuntimeScore {
   const patternByState = new Map<StateId, string>();
   for (const { screen, states } of graph.screens) {
     for (const state of states) patternByState.set(state.id, screen.routePattern);
