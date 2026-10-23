@@ -67,6 +67,7 @@ type NavigationSpec = {
   readonly to: string;
   readonly redirects?: readonly string[];
   readonly aborted?: string;
+  readonly interact?: { readonly click: string; readonly fields: readonly string[] };
 };
 
 function crawlOf({
@@ -108,7 +109,14 @@ function crawlOf({
         start:
           spec.from === undefined
             ? { kind: 'entry' }
-            : { kind: 'action', from: keyOf(spec.from), action: { kind: 'follow-link', href: page(spec.to), name: null } },
+            : {
+                kind: 'action',
+                from: keyOf(spec.from),
+                action:
+                  spec.interact === undefined
+                    ? { kind: 'follow-link', href: page(spec.to), name: null }
+                    : { kind: 'interact', page: page(spec.from), ...spec.interact },
+              },
         requested: page(spec.to),
         redirects,
         landing:
@@ -204,9 +212,52 @@ describe('triggerCandidates', () => {
   it('names the link trigger for a followed link', () => {
     expect(triggerCandidates({ kind: 'follow-link', href: page('/a'), name: null })).toEqual(['link']);
   });
+
+  it('cannot tell a push from a replace for an interaction', () => {
+    expect(triggerCandidates({ kind: 'interact', page: page('/a'), click: 'Go', fields: [] })).toEqual([
+      'router-push',
+      'router-replace',
+    ]);
+  });
 });
 
 describe('reconcileRun on fixtures/demo', () => {
+  it('matches an interaction to the static router push or replace it drove, and never invents one', () => {
+    const push = edge('/login', 'router-push', '/dashboard');
+    const replace = edge('/signup', 'router-replace', '/projects/new');
+    expect(isStatic(push)).toBe(true);
+    expect(isStatic(replace)).toBe(true);
+    const ingestion = reconcile(
+      crawlOf({
+        session: anonymous,
+        captures: [
+          ['/login', 200],
+          ['/signup', 200],
+          ['/dashboard', 200],
+          ['/projects/new', 200],
+          ['/pricing', 200],
+        ],
+        navigations: [
+          { from: '/login', to: '/dashboard', interact: { click: 'Log in', fields: ['Email', 'Password'] } },
+          { from: '/signup', to: '/projects/new', interact: { click: 'Create account', fields: ['Work email'] } },
+          { from: '/login', to: '/pricing', interact: { click: 'Log in', fields: [] } },
+        ],
+      }),
+    );
+
+    expect(outcomeOf(ingestion, { kind: 'action', seq: 0 })).toMatchObject({ kind: 'supports', subject: push });
+    expect(outcomeOf(ingestion, { kind: 'action', seq: 1 })).toMatchObject({ kind: 'supports', subject: replace });
+    expect(matchesOf(ingestion).find(({ transitionId }) => transitionId === push)?.match).toMatchObject({
+      rule: 'action-matched-static',
+      triggerCandidates: ['router-push', 'router-replace'],
+    });
+    expect(outcomeOf(ingestion, { kind: 'action', seq: 2 })).toMatchObject({
+      kind: 'ignored',
+      reason: { kind: 'unknown-trigger' },
+    });
+    expect(ingestion.created).toEqual([]);
+  });
+
   it('(a) attributes an auth bounce to the link and the guard, not to a link to /login', () => {
     expect(isStatic(edge('/', 'link', '/dashboard'))).toBe(true);
     const ingestion = reconcile(loggedOut());
