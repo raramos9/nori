@@ -2,10 +2,11 @@ import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { parseArgs } from 'node:util';
 import { applicationId, buildId } from '../graph/ids.js';
-import type { Application, ApplicationId, Build, BuildGraph, StaticIngestion } from '../graph/model.js';
+import type { Application, ApplicationId, Build, BuildGraph, RoutePattern, StaticIngestion } from '../graph/model.js';
 import { sourceHash } from '../graph/source-hash.js';
 import { navigationIngestion, type CallOutcome } from '../ingest/navigation.js';
 import { screensIngestion } from '../ingest/screens.js';
+import type { Matcher } from '../next/match.js';
 import { discoverProject } from '../next/project.js';
 import { discoverRoutes } from '../next/routes.js';
 import { stateDatabasePath } from '../runtime/layout.js';
@@ -16,6 +17,8 @@ import type { Command } from './command.js';
 export type Analysis = {
   readonly root: string;
   readonly ingestion: StaticIngestion;
+  readonly matcher: Matcher;
+  readonly passThrough: ReadonlySet<RoutePattern>;
   readonly outcomes: readonly CallOutcome[];
 };
 
@@ -72,6 +75,8 @@ export async function analyze({
       evidence: [...screens.evidence, ...navigation.evidence],
       observations: [...screens.observations, ...navigation.observations],
     },
+    matcher: navigation.matcher,
+    passThrough: navigation.redirectOnly,
     outcomes: navigation.outcomes,
   };
 }
