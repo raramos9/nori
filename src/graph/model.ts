@@ -44,6 +44,35 @@ export const parseRoutePattern = brandParser<RoutePattern>('RoutePattern', (valu
 const COMMIT_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 export const parseCommitSha = brandParser<CommitSha>('CommitSha', (value) => COMMIT_SHA.test(value));
 
+export type Origin = Brand<'Origin'>;
+export type PageUrl = Brand<'PageUrl'>;
+
+export function parseOrigin(value: string): Origin {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`Invalid Origin: ${JSON.stringify(value)}`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`Invalid Origin: ${JSON.stringify(value)} is not http or https`);
+  }
+  return url.origin as Origin;
+}
+
+// A page URL is absolute, on the run's origin, with the fragment cut: two hrefs that differ only by
+// fragment load the same document.
+export function parsePageUrl(origin: Origin, raw: string): PageUrl {
+  const url = new URL(raw, origin);
+  if (url.origin !== origin) throw new Error(`${JSON.stringify(raw)} is not on ${origin}`);
+  url.hash = '';
+  return url.href as PageUrl;
+}
+
+export type Session =
+  | { readonly kind: 'anonymous' }
+  | { readonly kind: 'storage-state'; readonly label: string };
+
 export type Framework = 'next-app-router';
 
 export type Application = {

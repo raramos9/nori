@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { applicationId, buildId, evidenceId } from './ids.js';
 import {
+  parseOrigin,
+  parsePageUrl,
   deriveEvidenceStatus,
   parseCommitSha,
   parseRoutePattern,
@@ -41,5 +43,20 @@ describe('deriveEvidenceStatus', () => {
     const contradicts: EvidenceObservation = { evidence, verdict: 'contradicts' };
     expect(deriveEvidenceStatus([supports])).toBe('inferred');
     expect(deriveEvidenceStatus([supports, contradicts])).toBe('inferred');
+  });
+});
+
+describe('runtime URL parsers', () => {
+  it('keeps only the origin of an http(s) URL', () => {
+    expect(parseOrigin('http://localhost:3000/dashboard?x=1')).toBe('http://localhost:3000');
+    expect(() => parseOrigin('file:///etc/passwd')).toThrow();
+    expect(() => parseOrigin('not a url')).toThrow();
+  });
+
+  it('resolves page URLs against the origin, cuts the fragment, and refuses other origins', () => {
+    const origin = parseOrigin('http://localhost:3000');
+    expect(parsePageUrl(origin, '/docs/a?b=1#top')).toBe('http://localhost:3000/docs/a?b=1');
+    expect(() => parsePageUrl(origin, 'https://example.com/')).toThrow();
+    expect(() => parsePageUrl(origin, 'http://localhost:3001/')).toThrow();
   });
 });
