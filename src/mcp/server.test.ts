@@ -82,7 +82,7 @@ describe('nori MCP server', () => {
     expect(snippet.lines.join('\n')).toContain('<Link href={target}>');
   });
 
-  it('surfaces captures, walks and the screenshot path of runtime evidence', async () => {
+  it('surfaces captures, sessions and the screenshot path of runtime evidence', async () => {
     const { root, graph } = await analyze();
     const runId = parseRunId('run_0000000000000001');
     const captureFor = (n: number, session: string, verdict: ExplorerCapture['verdict']): ExplorerCapture => ({
@@ -139,15 +139,14 @@ describe('nori MCP server', () => {
     const home = forged.screens.find(({ route }) => route === '/')!;
     const detail = (await client.callTool({ name: 'get_screen', arguments: { screenId: home.id } })).structuredContent as {
       screen: { captures: { session: string; screenshotPath: string }[] };
-      outgoing: { id: string; runtimeOnly: boolean; observedIn: string[]; walks: { session: string; landing: { screenshotPath: string } }[]; mayExplain?: string[] }[];
+      outgoing: { id: string; runtimeOnly: boolean; observedIn: string[]; mayExplain?: string[] }[];
     };
     expect(detail.screen.captures.map(({ session }) => session)).toEqual(['signed-in', 'anonymous', 'anonymous']);
     const runtimeOnly = detail.outgoing.find(({ runtimeOnly: only }) => only)!;
     expect(runtimeOnly).toMatchObject({ observedIn: ['anonymous', 'signed-in'], mayExplain: [unresolved.id] });
-    expect(runtimeOnly.walks.map(({ session }) => session)).toEqual(['anonymous', 'signed-in']);
-    expect(runtimeOnly.walks[0]?.landing.screenshotPath).toBe('/runs/landing.png');
+    expect(runtimeOnly).not.toHaveProperty('walks');
     const explained = detail.outgoing.find(({ id }) => id === unresolved.id)!;
-    expect(explained).toMatchObject({ runtimeOnly: false, observedIn: [], walks: [] });
+    expect(explained).toMatchObject({ runtimeOnly: false, observedIn: [] });
     expect(explained).not.toHaveProperty('mayExplain');
   });
 

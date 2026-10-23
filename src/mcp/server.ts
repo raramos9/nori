@@ -56,18 +56,6 @@ const targetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('unresolved'), reason: z.string(), expression: z.string() }),
 ]);
 
-const walkSchema = z.object({
-  evidenceId: z.string(),
-  runId: z.string(),
-  session: z.string(),
-  rule: z.string().describe('How the crawl matched this walk to the transition'),
-  hop: z.number().nullable().describe('For a redirect rule, the index of the redirect hop that this transition is'),
-  requested: z.string(),
-  redirects: z.array(z.object({ to: z.string(), via: z.enum(['http', 'client']) })),
-  skipped: z.array(z.object({ url: z.string(), why: z.string() })).describe('Hops passed through without being a screen'),
-  landing: z.object({ evidenceId: z.string(), url: z.string(), screenshotPath: z.string() }),
-});
-
 const transitionShape = {
   id: z.string(),
   trigger: z.string(),
@@ -75,11 +63,10 @@ const transitionShape = {
   sources: z.array(sourceSchema),
   runtimeOnly: z.boolean().describe('Seen in a crawl but not in the static analysis, so sources is empty'),
   observedIn: z.array(z.string()).describe("Sessions whose crawl walked this transition: 'anonymous' or a storage-state label"),
-  walks: z.array(walkSchema),
   mayExplain: z
     .array(z.string())
     .optional()
-    .describe('Runtime-only transitions only: ids of unresolved static transitions from the same screen with the same trigger that this walk may be'),
+    .describe('Runtime-only transitions only: ids of unresolved static transitions from the same screen with the same trigger that this transition may be'),
 };
 
 function respond(structuredContent: Record<string, unknown>): CallToolResult {
@@ -99,7 +86,6 @@ export function createMcpServer({ current, realRoot }: { current: () => Promise<
     sources: transition.sources,
     runtimeOnly: transition.runtimeOnly,
     observedIn: transition.observedIn,
-    walks: transition.walks,
     ...(transition.runtimeOnly ? { mayExplain: transition.mayExplain } : {}),
   });
   const buildInfo = ({ snapshot, refreshError }: Served) => ({
@@ -157,7 +143,7 @@ export function createMcpServer({ current, realRoot }: { current: () => Promise<
     'get_screen',
     {
       description:
-        'Get one screen with the transitions leaving it and arriving at it. An unresolved target is a navigation call the static analysis could not pin to a route; its expression is the source text. screen.captures[] are the crawled renders: Read a screenshotPath to see the page, or domPath for its HTML. Transitions seen only at runtime have runtimeOnly set; observedIn and walks say which sessions walked them. Pass any sources[].evidenceId to read_source.',
+        'Get one screen with the transitions leaving it and arriving at it. An unresolved target is a navigation call the static analysis could not pin to a route; its expression is the source text. screen.captures[] are the crawled renders: Read a screenshotPath to see the page, or domPath for its HTML. Transitions seen only at runtime have runtimeOnly set; observedIn says which crawl sessions walked a transition. Pass any sources[].evidenceId to read_source.',
       annotations: READ_ONLY,
       inputSchema: { screenId: z.string().describe('A screen id from list_screens') },
       outputSchema: {
