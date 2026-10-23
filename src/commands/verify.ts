@@ -102,7 +102,12 @@ export async function verify(options: VerifyOptions): Promise<VerifyReport> {
     const runs: RunOutcome[] = [];
     for (const { session, storageStatePath } of sessions) {
       const pending = join(appHome(application.id), 'runs', `${randomUUID()}.partial`);
-      const crawl = await crawlSite({ origin, session, storageStatePath, seeds, budgets: options.budgets, dir: pending });
+      const crawl = await crawlSite({ origin, session, storageStatePath, seeds, budgets: options.budgets, dir: pending }).catch(
+        async (error: unknown) => {
+          await rm(pending, { recursive: true, force: true });
+          throw error;
+        },
+      );
       const project = await discoverProject({ path: options.path });
       const after = sourceHash({ files: project.files });
       if (after !== build.sourceHash) {
