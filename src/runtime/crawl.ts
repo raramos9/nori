@@ -124,6 +124,41 @@ export function redactValues(url: string, values: readonly string[]): string {
   return out;
 }
 
+function htmlEscaped(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Every spelling a value can take on its way into a url, a form body or markup. A short value only
+// matches as a whole token, so it cannot chew up the words around it.
+export function redactText(text: string, values: readonly string[]): string {
+  let out = text;
+  for (const value of values) {
+    const forms = new Set([
+      value,
+      encodeURIComponent(value),
+      new URLSearchParams({ v: value }).toString().slice(2),
+      htmlEscaped(value),
+      htmlEscaped(encodeURIComponent(value)),
+    ]);
+    for (const form of [...forms].sort((a, b) => b.length - a.length)) {
+      const pattern = value.length >= LONG_SECRET ? escapeRegExp(form) : `(?<![\\w%])${escapeRegExp(form)}(?![\\w%])`;
+      out = out.replace(new RegExp(pattern, 'g'), REDACTED);
+    }
+  }
+  return out;
+}
+
+function redactDeep<T>(value: T, values: readonly string[]): T {
+  if (typeof value === 'string') return redactText(value, values) as T;
+  if (Array.isArray(value)) return value.map((item) => redactDeep(item, values)) as T;
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactDeep(item, values)])) as T;
+  }
+  return value;
+}
+
 export function pageUrlOrNull(origin: Origin, raw: string): PageUrl | null {
   let url: URL;
   try {
@@ -199,8 +234,13 @@ export class RunRecorder {
   private readonly byRequest = new WeakMap<Request, NetworkEntry>();
   private readonly actions: (ActionEntry | InteractionEntry)[] = [];
   private readonly captures: CrawledCapture[] = [];
+  private readonly secrets = new Set<string>();
 
   constructor(private readonly dir: string) {}
+
+  registerSecrets(values: readonly string[]): void {
+    for (const value of values) if (value !== '') this.secrets.add(value);
+  }
 
   async open(): Promise<void> {
     await mkdir(join(this.dir, 'captures'), { recursive: true });
@@ -253,7 +293,8 @@ export class RunRecorder {
   }
 
   async close(): Promise<void> {
-    const lines = (rows: readonly object[]) => rows.map((row) => `${JSON.stringify(row)}\n`).join('');
+    const secrets = [...this.secrets];
+    const lines = (rows: readonly object[]) => rows.map((row) => `${JSON.stringify(redactDeep(row, secrets))}\n`).join('');
     await writeFile(join(this.dir, 'network.ndjson'), lines(this.network));
     await writeFile(join(this.dir, 'actions.ndjson'), lines(this.actions));
   }
@@ -517,6 +558,25 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
       }
     }
 
+    // A page captured here has never seen a filled value: the context has no secrets and only the crawl's session.
+    const captureInCleanContext = async (url: PageUrl): Promise<CaptureKey | null> => {
+      const cleanContext = await openContext(browser, { origin, storageStatePath: options.storageStatePath, recorder });
+      try {
+        const cleanPage = await cleanContext.newPage();
+        const cleanWatch = new PageWatch(cleanPage);
+        const response = await cleanPage.goto(url, { waitUntil: 'load', timeout: GOTO_TIMEOUT_MS });
+        await settle(cleanPage, cleanWatch);
+        if (pageUrlOrNull(origin, cleanPage.url()) !== url) return null;
+        const status = cleanWatch.statusFor(origin, url) ?? response?.status();
+        if (status === undefined) return null;
+        return (await recorder.capture(cleanPage, url, status)).key;
+      } catch {
+        return null;
+      } finally {
+        await cleanContext.close();
+      }
+    };
+
     // Each interaction gets its own context: a login or sign-out must not change the session the next
     // one starts from, nor the crawl above.
     for (const interaction of stop === 'budget' ? [] : (options.interactions ?? [])) {
@@ -526,7 +586,13 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
       }
       const fields = interaction.fill.map(({ label }) => label);
       const summary = { page: interaction.page, click: interaction.click, fields };
+      const startKey = capturedByUrl.get(interaction.page);
+      if (startKey === undefined) {
+        recorder.logAction({ interaction: summary, outcome: 'skipped', reason: 'the crawl did not capture this page' });
+        continue;
+      }
       const secrets = interaction.fill.map(({ value }) => value).filter((value) => value !== '');
+      recorder.registerSecrets(secrets);
       let leaked = false;
       const interactionContext = await openContext(browser, {
         origin,
@@ -548,14 +614,6 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
           recorder.logAction({ interaction: summary, outcome: 'skipped', reason: `landed on ${interactionPage.url()}` });
           continue;
         }
-        let startKey = capturedByUrl.get(startUrl);
-        if (startKey === undefined) {
-          const status = interactionWatch.statusFor(origin, startUrl);
-          if (status === null) throw new Error('no document response');
-          startKey = (await recorder.capture(interactionPage, startUrl, status)).key;
-          capturedByUrl.set(startUrl, startKey);
-        }
-
         for (const { label, value } of interaction.fill) {
           await interactionPage.getByLabel(label, { exact: true }).fill(value, { timeout: LOCATOR_TIMEOUT_MS });
         }
@@ -581,18 +639,14 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
           navigatedUrls: interactionWatch.navigatedUrls,
           landing: landingUrl,
         });
-        const consoleErrors = [...interactionWatch.consoleErrors];
         let landingKey = capturedByUrl.get(landingUrl);
         if (landingKey === undefined) {
-          // A client-side navigation has no document response, so reload for the status the page renders with.
-          const status =
-            interactionWatch.statusFor(origin, landingUrl) ??
-            (await interactionPage.reload({ waitUntil: 'load', timeout: GOTO_TIMEOUT_MS }))?.status();
-          if (status === undefined || pageUrlOrNull(origin, interactionPage.url()) !== landingUrl) {
-            throw new Error(`could not capture ${landingUrl}`);
+          const clean = await captureInCleanContext(landingUrl);
+          if (clean === null) {
+            recorder.logAction({ interaction: summary, outcome: 'failed', reason: 'the landing page could not be captured in a clean context' });
+            continue;
           }
-          await settle(interactionPage, interactionWatch);
-          landingKey = (await recorder.capture(interactionPage, landingUrl, status)).key;
+          landingKey = clean;
           capturedByUrl.set(landingUrl, landingKey);
         }
 
@@ -612,7 +666,7 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
           chain: [requested, ...redirects.map((redirect) => redirect.to)],
           landing: { capture: landingKey, url: landingUrl },
           reused: false,
-          consoleErrors,
+          consoleErrors: [],
         });
       } catch (error) {
         const reason =
