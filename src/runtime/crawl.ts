@@ -186,7 +186,12 @@ async function launchChrome(proxyServer: string): Promise<Browser> {
       channel: 'chrome',
       headless: true,
       proxy: { server: proxyServer },
-      args: ['--disable-component-update', '--disable-sync', '--disable-features=OptimizationHints,AutofillServerCommunication'],
+      args: [
+        '--disable-component-update',
+        '--disable-sync',
+        '--disable-features=OptimizationHints,AutofillServerCommunication',
+        '--webrtc-ip-handling-policy=disable_non_proxied_udp',
+      ],
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
