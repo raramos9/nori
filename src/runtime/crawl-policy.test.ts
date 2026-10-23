@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import { mkdtempSync, readFileSync } from 'node:fs';
+import { createSocket } from 'node:dgram';
 import { createServer as createTcpServer, type AddressInfo, type Server as TcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,7 +21,10 @@ describe('crawl origin policy against a live browser', () => {
     outsideConnections.push('connect');
     socket.destroy();
   });
+  const outsideDatagrams: string[] = [];
+  const outsideUdp = createSocket('udp4', () => outsideDatagrams.push('datagram'));
   let away = '';
+  let awayUdpPort = 0;
   const page = (body: string) => `<!doctype html><html><head>${body}</head><body><a id="a" ping="${away}/ping" href="/landed">x</a></body></html>`;
   const app = createServer((req, res) => {
     const redirect = (location: string, status = 302) => {
@@ -53,6 +57,12 @@ describe('crawl origin policy against a live browser', () => {
               fetch('${away}/fetch').catch(() => {});
               fetch('/api', { method: 'POST' }).catch(() => {});
               navigator.sendBeacon('${away}/beacon', 'x');
+              const peer = new RTCPeerConnection({ iceServers: [
+                { urls: 'stun:127.0.0.1:${awayUdpPort}' },
+                { urls: 'turn:${away.replace('http://', '')}?transport=tcp', username: 'u', credential: 'c' },
+              ] });
+              peer.createDataChannel('x');
+              peer.createOffer().then((offer) => peer.setLocalDescription(offer));
               addEventListener('load', () => document.getElementById('a').click());
             </script>
             <iframe src="${away}/frame"></iframe>`),
@@ -66,9 +76,11 @@ describe('crawl origin policy against a live browser', () => {
   beforeAll(async () => {
     away = `http://127.0.0.1:${await listen(outside)}`;
     appPort = await listen(app);
+    awayUdpPort = await new Promise((resolve) => outsideUdp.bind(0, '127.0.0.1', () => resolve(outsideUdp.address().port)));
   });
   afterAll(() => {
     outside.close();
+    outsideUdp.close();
     app.close();
   });
 
@@ -95,6 +107,7 @@ describe('crawl origin policy against a live browser', () => {
       await recorder.close();
     }
     expect(outsideConnections).toEqual([]);
+    expect(outsideDatagrams).toEqual([]);
     expect(landed).toBe(`${origin}/landed`);
     const entries = readFileSync(join(dir, 'network.ndjson'), 'utf8')
       .trim()
