@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { NoriError } from '../errors.js';
 import { applicationId } from '../graph/ids.js';
+import { verdictOf } from '../graph/model.js';
 import { formatScan, scan, stateDatabasePath } from './scan.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -119,15 +120,15 @@ describe('scan', () => {
     const filesOf = (pattern: string) =>
       graph.screens
         .find(({ screen }) => screen.routePattern === pattern)
-        ?.observations.map(({ evidence }) => evidence.span.file)
+        ?.observations.flatMap(({ evidence }) => (evidence.kind === 'static' ? [evidence.span.file] : []))
         .sort();
     expect(filesOf('/about')).toEqual(['app/(marketing)/about/page.tsx', 'app/@modal/about/page.tsx']);
     expect(filesOf('/')).toEqual(['app/page.tsx']);
     for (const { observations, status } of graph.screens) {
       expect(status).toBe('inferred');
-      for (const { evidence, verdict } of observations) {
-        expect(evidence.kind).toBe('static');
-        expect(verdict).toBe('supports');
+      for (const observation of observations) {
+        expect(observation.evidence.kind).toBe('static');
+        expect(verdictOf(observation)).toBe('supports');
       }
     }
   });
@@ -250,7 +251,7 @@ describe('scan navigation', () => {
     expect(second).toEqual(first);
     expect(afterFirst).toMatchObject({ transitions: 4, evidence: 6, observations: 8 });
     expect(formatScan(first).split('\n').at(-1)).toBe('4 transitions (3 resolved, 1 unresolved)');
-    const spans = first.transitions.flatMap(({ observations }) => observations.map(({ evidence }) => evidence.span));
+    const spans = first.transitions.flatMap(({ observations }) => observations.flatMap(({ evidence }) => (evidence.kind === 'static' ? [evidence.span] : [])));
     expect(spans).toContainEqual({
       file: 'components/nav.tsx',
       start: { line: 2, column: 32 },

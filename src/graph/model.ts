@@ -1,3 +1,6 @@
+import { isAbsolute, normalize } from 'node:path';
+import type { Redirect, RunStop, RuntimeAction } from '../runtime/crawl-result.js';
+
 type Brand<Name extends string> = string & { readonly __brand: Name };
 
 export type ApplicationId = Brand<'ApplicationId'>;
@@ -8,6 +11,8 @@ export type TransitionId = Brand<'TransitionId'>;
 export type EvidenceId = Brand<'EvidenceId'>;
 export type RoutePattern = Brand<'RoutePattern'>;
 export type CommitSha = Brand<'CommitSha'>;
+export type RunId = Brand<'RunId'>;
+export type ArtifactPath = Brand<'ArtifactPath'>;
 
 export type NonEmpty<T> = readonly [T, ...T[]];
 
@@ -35,6 +40,12 @@ export const parseScreenId = idParser<ScreenId>('ScreenId', 'scr');
 export const parseStateId = idParser<StateId>('StateId', 'sta');
 export const parseTransitionId = idParser<TransitionId>('TransitionId', 'trn');
 export const parseEvidenceId = idParser<EvidenceId>('EvidenceId', 'evd');
+export const parseRunId = idParser<RunId>('RunId', 'run');
+
+export const parseArtifactPath = brandParser<ArtifactPath>(
+  'ArtifactPath',
+  (value) => isAbsolute(value) && normalize(value) === value,
+);
 
 const ROUTE_PATTERN = /^\/$|^(?:\/[^/()@\s]+)+$/;
 export const parseRoutePattern = brandParser<RoutePattern>('RoutePattern', (value) =>
@@ -148,11 +159,62 @@ export type StaticEvidence = {
   readonly extractor: string;
 };
 
-export type Evidence = StaticEvidence;
+export type Run = {
+  readonly id: RunId;
+  readonly applicationId: ApplicationId;
+  readonly buildId: BuildId;
+  readonly origin: Origin;
+  readonly session: Session;
+  readonly startedAt: Date;
+  readonly finishedAt: Date;
+  readonly stop: RunStop;
+  readonly crawlerVersion: string;
+  readonly reconcilerVersion: string;
+  readonly requests: { readonly allowed: number; readonly blocked: number };
+};
 
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+export type Capture = {
+  readonly url: PageUrl;
+  readonly httpStatus: number;
+  readonly screenshot: ArtifactPath;
+  readonly dom: ArtifactPath;
+};
 
-export type EvidenceIdentity = DistributiveOmit<Evidence, 'id'>;
+export type CaptureEvidence = Capture & {
+  readonly kind: 'capture';
+  readonly id: EvidenceId;
+  readonly buildId: BuildId;
+  readonly runId: RunId;
+};
+
+// An entry is the crawler opening a seed URL: there is no source screen, so no action step.
+export type NavigationEvidenceStart =
+  | { readonly kind: 'entry' }
+  | {
+      readonly kind: 'action';
+      readonly from: { readonly evidenceId: EvidenceId; readonly url: PageUrl };
+      readonly action: RuntimeAction;
+    };
+
+export type NavigationEvidence = {
+  readonly kind: 'navigation';
+  readonly id: EvidenceId;
+  readonly buildId: BuildId;
+  readonly runId: RunId;
+  readonly start: NavigationEvidenceStart;
+  readonly requested: PageUrl;
+  readonly redirects: readonly Redirect[];
+  readonly landing: Capture & { readonly evidenceId: EvidenceId };
+  readonly logSeq: number;
+};
+
+export type RuntimeEvidence = CaptureEvidence | NavigationEvidence;
+export type Evidence = StaticEvidence | RuntimeEvidence;
+
+export type EvidenceIdentity =
+  | Omit<StaticEvidence, 'id'>
+  | Pick<CaptureEvidence, 'kind' | 'buildId' | 'runId' | 'url'>
+  | Pick<NavigationEvidence, 'kind' | 'buildId' | 'runId' | 'start' | 'requested'>;
 
 export type ObservationSubject =
   | { readonly kind: 'screen'; readonly id: ScreenId }
@@ -168,10 +230,49 @@ export type Observation = {
 
 export type EvidenceStatus = 'inferred' | 'observed' | 'verified' | 'failed';
 
-export type EvidenceObservation = {
-  readonly evidence: Evidence;
-  readonly verdict: Verdict;
+export type ScreenMatch =
+  | { readonly verdict: 'supports'; readonly rule: 'rendered'; readonly url: PageUrl; readonly pattern: RoutePattern }
+  | {
+      readonly verdict: 'contradicts';
+      readonly rule: 'server-error';
+      readonly url: PageUrl;
+      readonly pattern: RoutePattern;
+      readonly httpStatus: number;
+    };
+
+export type NotAScreen = 'asset' | 'handler' | 'no-matching-route' | 'ambiguous-route';
+
+export type SkippedHop = { readonly url: PageUrl; readonly why: 'pass-through' | NotAScreen };
+
+export type TargetSearch = {
+  readonly sourceUrl: PageUrl;
+  readonly sourcePattern: RoutePattern;
+  readonly targetUrl: PageUrl;
+  readonly targetPattern: RoutePattern;
+  readonly skipped: readonly SkippedHop[];
+  readonly triggerCandidates: NonEmpty<Trigger['kind']>;
 };
+
+// Runtime only ever supports a transition. It can't name the call site an anchor came from, so a
+// different landing is another transition or a redirect, never a refutation.
+export type TransitionMatch =
+  | (TargetSearch & { readonly verdict: 'supports'; readonly rule: 'action-matched-static' })
+  | (TargetSearch & { readonly verdict: 'supports'; readonly rule: 'action-runtime-only' })
+  | (TargetSearch & { readonly verdict: 'supports'; readonly rule: 'redirect-matched-static'; readonly hop: number });
+
+export type ScreenObservation =
+  | { readonly evidence: StaticEvidence; readonly verdict: Verdict }
+  | { readonly evidence: CaptureEvidence; readonly match: ScreenMatch };
+
+export type TransitionObservation =
+  | { readonly evidence: StaticEvidence; readonly verdict: Verdict }
+  | { readonly evidence: NavigationEvidence; readonly match: TransitionMatch };
+
+export type EvidenceObservation = ScreenObservation | TransitionObservation;
+
+export function verdictOf(observation: EvidenceObservation): Verdict {
+  return 'match' in observation ? observation.match.verdict : observation.verdict;
+}
 
 const STATUS_RANK: Record<EvidenceStatus, number> = {
   inferred: 0,
@@ -180,22 +281,17 @@ const STATUS_RANK: Record<EvidenceStatus, number> = {
   failed: 3,
 };
 
-function statusFromObservation({ evidence, verdict }: EvidenceObservation): EvidenceStatus {
-  switch (evidence.kind) {
+// failed may dominate only because the one runtime contradiction is a 5xx render, a defect under any
+// session, never a session-dependent absence.
+function statusFromObservation(observation: EvidenceObservation): EvidenceStatus {
+  switch (observation.evidence.kind) {
     case 'static':
-      // Static analysis proposes candidates but can never establish or refute behavior,
-      // so even a static contradiction leaves the entity inferred.
-      switch (verdict) {
-        case 'supports':
-        case 'contradicts':
-          return 'inferred';
-        default: {
-          const _exhaustive: never = verdict;
-          return _exhaustive;
-        }
-      }
+      return 'inferred';
+    case 'capture':
+    case 'navigation':
+      return verdictOf(observation) === 'supports' ? 'observed' : 'failed';
     default: {
-      const _exhaustive: never = evidence.kind;
+      const _exhaustive: never = observation.evidence;
       return _exhaustive;
     }
   }
@@ -215,25 +311,83 @@ export type StaticIngestion = {
   readonly build: Build;
   readonly screens: readonly Screen[];
   readonly transitions: readonly Transition[];
-  readonly evidence: readonly Evidence[];
+  readonly evidence: readonly StaticEvidence[];
   readonly observations: readonly Observation[];
+};
+
+export type RuntimeOnlyTransition = Transition & {
+  readonly target: { readonly kind: 'resolved'; readonly stateId: StateId };
+};
+
+export type IgnoreReason =
+  | { readonly kind: 'aborted'; readonly error: string }
+  | { readonly kind: 'not-a-screen'; readonly url: PageUrl; readonly why: NotAScreen }
+  | { readonly kind: 'client-error'; readonly url: PageUrl; readonly httpStatus: number }
+  | { readonly kind: 'source-not-rendered'; readonly url: PageUrl; readonly httpStatus: number }
+  | { readonly kind: 'landing-error'; readonly url: PageUrl; readonly httpStatus: number }
+  | { readonly kind: 'ambiguous-trigger'; readonly candidates: NonEmpty<TransitionId> }
+  | { readonly kind: 'unknown-trigger' }
+  | { readonly kind: 'redirect-from-non-screen'; readonly url: PageUrl }
+  | { readonly kind: 'unmatched-redirect'; readonly from: RoutePattern; readonly to: RoutePattern };
+
+export type CaptureStep = { readonly kind: 'capture'; readonly evidenceId: EvidenceId };
+export type ActionStep = { readonly kind: 'action'; readonly seq: number };
+export type RedirectStep = { readonly kind: 'redirect'; readonly seq: number; readonly hop: number };
+// An aborted navigation never reached a landing, so it is one step of its own, whatever started it.
+export type AbortedStep = { readonly kind: 'aborted'; readonly seq: number };
+export type StepRef = CaptureStep | ActionStep | RedirectStep | AbortedStep;
+
+export type StepOutcome =
+  | { readonly step: CaptureStep | ActionStep | RedirectStep; readonly kind: 'supports'; readonly subject: ScreenId | TransitionId }
+  | { readonly step: CaptureStep; readonly kind: 'contradicts'; readonly subject: ScreenId }
+  | { readonly step: ActionStep; readonly kind: 'created'; readonly subject: TransitionId }
+  | { readonly step: StepRef; readonly kind: 'ignored'; readonly reason: IgnoreReason };
+
+export type RunIngestion = {
+  readonly run: Run;
+  readonly captures: readonly { readonly evidence: CaptureEvidence; readonly match: ScreenMatch | null }[];
+  readonly navigations: readonly {
+    readonly evidence: NavigationEvidence;
+    readonly matches: readonly { readonly transitionId: TransitionId; readonly match: TransitionMatch }[];
+  }[];
+  readonly created: readonly RuntimeOnlyTransition[];
+  readonly report: readonly StepOutcome[];
 };
 
 export type LoadedScreen = {
   readonly screen: Screen;
   readonly states: NonEmpty<UIState>;
-  readonly observations: NonEmpty<EvidenceObservation>;
+  readonly observations: NonEmpty<ScreenObservation>;
   readonly status: EvidenceStatus;
 };
 
 export type LoadedTransition = {
   readonly transition: Transition;
-  readonly observations: NonEmpty<EvidenceObservation>;
+  readonly observations: NonEmpty<TransitionObservation>;
   readonly status: EvidenceStatus;
 };
 
 export type BuildGraph = {
   readonly build: Build;
+  readonly runs: readonly Run[];
   readonly screens: readonly LoadedScreen[];
   readonly transitions: readonly LoadedTransition[];
 };
+
+// The static unresolved transitions that might be the call a runtime-only transition walked: same
+// source state, same trigger. Derived on read so it can never go stale against the static side.
+export function mayExplain(graph: BuildGraph, transitionId: TransitionId): readonly TransitionId[] {
+  const isStatic = (observation: TransitionObservation) => observation.evidence.kind === 'static';
+  const loaded = graph.transitions.find(({ transition }) => transition.id === transitionId);
+  if (loaded === undefined || loaded.observations.some(isStatic)) return [];
+  const { sourceStateId, trigger } = loaded.transition;
+  return graph.transitions
+    .filter(
+      ({ transition }) =>
+        transition.target.kind === 'unresolved' &&
+        transition.sourceStateId === sourceStateId &&
+        transition.trigger.kind === trigger.kind,
+    )
+    .map(({ transition }) => transition.id)
+    .sort();
+}

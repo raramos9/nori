@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
   parseApplicationId,
+  parseRunId,
   parseBuildId,
   parseEvidenceId,
   parseScreenId,
@@ -11,6 +12,10 @@ import {
   type CommitSha,
   type EvidenceId,
   type EvidenceIdentity,
+  type NavigationEvidenceStart,
+  type Origin,
+  type RunId,
+  type Session,
   type RoutePattern,
   type ScreenId,
   type StateId,
@@ -18,6 +23,7 @@ import {
   type TransitionTarget,
   type Trigger,
 } from './model.js';
+import type { RuntimeAction } from '../runtime/crawl-result.js';
 
 type Part = string | number;
 
@@ -76,6 +82,50 @@ export function transitionId(args: {
   );
 }
 
+function sessionKey(session: Session): string {
+  switch (session.kind) {
+    case 'anonymous':
+      return session.kind;
+    case 'storage-state':
+      return `${session.kind}:${session.label}`;
+    default: {
+      const _exhaustive: never = session;
+      return _exhaustive;
+    }
+  }
+}
+
+export function runId(args: { buildId: BuildId; origin: Origin; session: Session; startedAt: Date }): RunId {
+  return parseRunId(
+    derive('run', [args.buildId, args.origin, sessionKey(args.session), args.startedAt.toISOString()]),
+  );
+}
+
+// The link's name is left out: two anchors to the same href from the same page are one navigation.
+function actionKey(action: RuntimeAction): string {
+  switch (action.kind) {
+    case 'follow-link':
+      return `${action.kind} ${action.href}`;
+    default: {
+      const _exhaustive: never = action.kind;
+      return _exhaustive;
+    }
+  }
+}
+
+function startKey(start: NavigationEvidenceStart): string {
+  switch (start.kind) {
+    case 'entry':
+      return start.kind;
+    case 'action':
+      return `${start.from.url} ${actionKey(start.action)}`;
+    default: {
+      const _exhaustive: never = start;
+      return _exhaustive;
+    }
+  }
+}
+
 function evidenceIdentityParts(identity: EvidenceIdentity): readonly Part[] {
   switch (identity.kind) {
     case 'static': {
@@ -91,8 +141,12 @@ function evidenceIdentityParts(identity: EvidenceIdentity): readonly Part[] {
         identity.extractor,
       ];
     }
+    case 'capture':
+      return [identity.buildId, identity.kind, identity.runId, identity.url];
+    case 'navigation':
+      return [identity.buildId, identity.kind, identity.runId, startKey(identity.start), identity.requested];
     default: {
-      const _exhaustive: never = identity.kind;
+      const _exhaustive: never = identity;
       return _exhaustive;
     }
   }

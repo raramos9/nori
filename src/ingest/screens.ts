@@ -2,7 +2,7 @@ import { evidenceId, screenId } from '../graph/ids.js';
 import type {
   Application,
   Build,
-  Evidence,
+  StaticEvidence,
   Observation,
   RoutePattern,
   Screen,
@@ -24,7 +24,7 @@ export function screensIngestion({
   table: RouteTable;
 }): StaticIngestion {
   const screens = new Map<RoutePattern, Screen>();
-  const evidence: Evidence[] = [];
+  const evidence: StaticEvidence[] = [];
   const observations: Observation[] = [];
 
   for (const route of table.routes) {
@@ -44,7 +44,7 @@ export function screensIngestion({
       span: { file: route.file, start: FILE_START, end: FILE_START },
       extractor: PAGE_FILE_EXTRACTOR,
     } as const;
-    const pageEvidence: Evidence = { ...identity, id: evidenceId(identity) };
+    const pageEvidence: StaticEvidence = { ...identity, id: evidenceId(identity) };
     evidence.push(pageEvidence);
     observations.push({
       evidenceId: pageEvidence.id,
