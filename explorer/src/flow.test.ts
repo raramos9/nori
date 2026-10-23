@@ -17,6 +17,7 @@ const screen = (n: number, route: string, status: EvidenceStatus = 'inferred'): 
   route: parseRoutePattern(route),
   status,
   sources: [],
+  captures: [],
 });
 
 let counter = 0;
@@ -33,6 +34,10 @@ function transition(
     target,
     status,
     sources: [{ evidenceId: parseEvidenceId(`evd_${hex(counter)}`), file: 'a.tsx', start: { line: 1, column: 1 }, end: { line: 1, column: 2 }, extractor: 'x' }],
+    walks: [],
+    runtimeOnly: false,
+    observedIn: [],
+    mayExplain: [],
   };
 }
 const to = (s: ExplorerScreen): ExplorerTarget => ({ kind: 'screen', screenId: s.id });
@@ -54,6 +59,7 @@ const graph: ExplorerGraph = {
     transition(about, dynamic),
     transition(about, to(pricing), 'observed'),
   ],
+  runs: [],
 };
 const all: Filters = { statuses: new Set(STATUSES), showUnresolved: true };
 

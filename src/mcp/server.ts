@@ -32,11 +32,23 @@ const sourceSchema = z.object({
   extractor: z.string(),
 });
 
+const captureSchema = z.object({
+  evidenceId: z.string(),
+  runId: z.string(),
+  session: z.string().describe("'anonymous' or the storage-state label of the crawl"),
+  url: z.string(),
+  httpStatus: z.number(),
+  verdict: z.enum(['supports', 'contradicts']),
+  screenshotPath: z.string().describe('Absolute path to a PNG; Read it to see the page'),
+  domPath: z.string().describe('Absolute path to the raw HTML of the crawled page'),
+});
+
 const screenSchema = z.object({
   id: z.string(),
   route: z.string(),
   status: statusSchema,
   sources: z.array(sourceSchema),
+  captures: z.array(captureSchema),
 });
 
 const targetSchema = z.discriminatedUnion('kind', [
@@ -86,7 +98,7 @@ export function createMcpServer({ current, realRoot }: { current: () => Promise<
       outputSchema: {
         build: buildSchema,
         screens: z.array(
-          screenSchema.omit({ sources: true }).extend({
+          screenSchema.omit({ sources: true, captures: true }).extend({
             outgoing: z.number().describe('Transitions leaving this screen'),
             unresolvedOutgoing: z
               .number()

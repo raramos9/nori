@@ -12,6 +12,7 @@ function snapshotOf(sourceHash: string): Snapshot {
     build: { id: `build-${sourceHash}`, commitSha, branch: 'main', createdAt: '2026-01-01T00:00:00.000Z', analyzerVersion: '0' },
     screens: [],
     transitions: [],
+    runs: [],
   };
   return createSnapshot({ graph, key: { commitSha, sourceHash } });
 }

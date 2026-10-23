@@ -10,6 +10,7 @@ const screen = (n: number, route: string): ExplorerScreen => ({
   route: parseRoutePattern(route),
   status: 'inferred',
   sources: [],
+  captures: [],
 });
 
 let counter = 0;
@@ -22,6 +23,10 @@ function transition(from: ExplorerScreen, to: ExplorerScreen): ExplorerTransitio
     target: { kind: 'screen', screenId: to.id },
     status: 'inferred',
     sources: [{ evidenceId: parseEvidenceId(`evd_${hex(counter)}`), file: 'a.tsx', start: { line: 1, column: 1 }, end: { line: 1, column: 2 }, extractor: 'x' }],
+    walks: [],
+    runtimeOnly: false,
+    observedIn: [],
+    mayExplain: [],
   };
 }
 
@@ -31,6 +36,7 @@ function view(screens: ExplorerScreen[], edges: [ExplorerScreen, ExplorerScreen]
     build: { id: 'b', commitSha: 'a'.repeat(40), branch: null, createdAt: '2026-01-01T00:00:00.000Z', analyzerVersion: '1' },
     screens,
     transitions: edges.map(([from, to]) => transition(from, to)),
+    runs: [],
   };
   return visibleGraph(graph, { statuses: new Set(STATUSES), showUnresolved: true });
 }
