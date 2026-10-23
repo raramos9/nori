@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { runId } from '../graph/ids.js';
@@ -18,6 +18,7 @@ import {
 import { NoriError } from '../errors.js';
 import { discoverProject } from '../next/project.js';
 import { crawlSite, type Budgets } from '../runtime/crawl.js';
+import { parseInteractions } from '../runtime/interactions.js';
 import { appHome, runDirectories, sealRunDirectory, stateDatabasePath } from '../runtime/layout.js';
 import { reconcileRun } from '../runtime/reconcile.js';
 import { GraphStore } from '../store/graph-store.js';
@@ -31,6 +32,7 @@ export type VerifyOptions = {
   readonly url: string;
   readonly storageStates: readonly StorageStateInput[];
   readonly anonymous: boolean;
+  readonly interactionsFile?: string | undefined;
   readonly budgets: Budgets;
 };
 
@@ -87,6 +89,13 @@ export async function verify(options: VerifyOptions): Promise<VerifyReport> {
   const sessions = plannedSessions(options);
   if (sessions.length === 0) throw new NoriError('nothing to verify: --no-anonymous needs at least one --storage-state');
 
+  const interactions =
+    options.interactionsFile === undefined
+      ? []
+      : parseInteractions(origin, await readFile(options.interactionsFile, 'utf8').catch(() => {
+          throw new NoriError(`cannot read --interactions ${options.interactionsFile}`);
+        }));
+
   const analysis = await analyze({ path: options.path, createdAt: new Date() });
   const { ingestion } = analysis;
   const { build, application } = ingestion;
@@ -102,7 +111,7 @@ export async function verify(options: VerifyOptions): Promise<VerifyReport> {
     const runs: RunOutcome[] = [];
     for (const { session, storageStatePath } of sessions) {
       const pending = join(appHome(application.id), 'runs', `${randomUUID()}.partial`);
-      const crawl = await crawlSite({ origin, session, storageStatePath, seeds, budgets: options.budgets, dir: pending }).catch(
+      const crawl = await crawlSite({ origin, session, storageStatePath, seeds, interactions, budgets: options.budgets, dir: pending }).catch(
         async (error: unknown) => {
           await rm(pending, { recursive: true, force: true });
           throw error;
@@ -172,6 +181,7 @@ export const verifyCommand: Command = {
         url: { type: 'string' },
         'storage-state': { type: 'string', multiple: true, default: [] },
         'no-anonymous': { type: 'boolean', default: false },
+        interactions: { type: 'string' },
         'max-captures': { type: 'string', default: String(DEFAULT_BUDGETS.maxCaptures) },
         'max-navigations': { type: 'string', default: String(DEFAULT_BUDGETS.maxNavigations) },
         'max-seconds': { type: 'string', default: String(DEFAULT_BUDGETS.maxMillis / 1000) },
@@ -197,6 +207,7 @@ export const verifyCommand: Command = {
       url: values.url,
       storageStates: values['storage-state'].map(parseStorageState),
       anonymous: !values['no-anonymous'],
+      interactionsFile: values.interactions,
       budgets: {
         maxCaptures: positive('max-captures', values['max-captures']),
         maxNavigations: positive('max-navigations', values['max-navigations']),

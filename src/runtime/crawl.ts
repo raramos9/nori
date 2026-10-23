@@ -12,6 +12,7 @@ import type {
   CrawledCapture,
   CrawledNavigation,
   CrawlResult,
+  Interaction,
   NavigationLanding,
   NavigationStart,
   Redirect,
@@ -25,6 +26,7 @@ const GOTO_TIMEOUT_MS = 30_000;
 const SETTLE_CAP_MS = 5_000;
 const QUIET_WINDOW_MS = 500;
 const POLL_MS = 100;
+const LOCATOR_TIMEOUT_MS = 3_000;
 
 export type RequestDecision = 'allowed' | 'allowlisted' | 'blocked' | 'internal';
 
@@ -130,13 +132,20 @@ type ActionEntry = {
   readonly consoleErrors: readonly string[];
 };
 
+// An interaction that never became a navigation: why it was passed over, failed, or went nowhere.
+type InteractionEntry = {
+  readonly interaction: { readonly page: PageUrl; readonly click: string; readonly fields: readonly string[] };
+  readonly outcome: 'skipped' | 'failed' | 'stayed';
+  readonly reason: string;
+};
+
 const sha16 = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16);
 
 // The only place a CrawledCapture is made, and only after its screenshot and DOM are on disk.
 export class RunRecorder {
   private readonly network: NetworkEntry[] = [];
   private readonly byRequest = new WeakMap<Request, NetworkEntry>();
-  private readonly actions: ActionEntry[] = [];
+  private readonly actions: (ActionEntry | InteractionEntry)[] = [];
   private readonly captures: CrawledCapture[] = [];
 
   constructor(private readonly dir: string) {}
@@ -160,7 +169,7 @@ export class RunRecorder {
     if (entry !== undefined) entry.status = status;
   }
 
-  logAction(entry: ActionEntry): void {
+  logAction(entry: ActionEntry | InteractionEntry): void {
     this.actions.push(entry);
   }
 
@@ -335,6 +344,7 @@ export type CrawlOptions = {
   readonly session: Session;
   readonly storageStatePath?: string | undefined;
   readonly seeds: readonly PageUrl[];
+  readonly interactions?: readonly Interaction[];
   readonly budgets: Budgets;
   readonly dir: string;
 };
@@ -402,12 +412,12 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
 
     const queue: Pending[] = [...new Set(options.seeds)].map((requested) => ({ start: { kind: 'entry' }, requested }));
     let stop: RunStop = 'frontier-exhausted';
+    const exhausted = () =>
+      recorder.allCaptures().length >= budgets.maxCaptures ||
+      navigations.length >= budgets.maxNavigations ||
+      Date.now() - startedAt.getTime() >= budgets.maxMillis;
     for (let head = 0; head < queue.length; head++) {
-      const exhausted =
-        recorder.allCaptures().length >= budgets.maxCaptures ||
-        navigations.length >= budgets.maxNavigations ||
-        Date.now() - startedAt.getTime() >= budgets.maxMillis;
-      if (exhausted) {
+      if (exhausted()) {
         stop = 'budget';
         break;
       }
@@ -438,6 +448,102 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
         for (const action of loaded.links) {
           queue.push({ start: { kind: 'action', from: loaded.landing.capture, action }, requested: action.href });
         }
+      }
+    }
+
+    // Each interaction gets its own context: a login or sign-out must not change the session the next
+    // one starts from, nor the crawl above.
+    for (const interaction of stop === 'budget' ? [] : (options.interactions ?? [])) {
+      if (exhausted()) {
+        stop = 'budget';
+        break;
+      }
+      const fields = interaction.fill.map(({ label }) => label);
+      const summary = { page: interaction.page, click: interaction.click, fields };
+      const interactionContext = await openContext(browser, {
+        origin,
+        storageStatePath: options.storageStatePath,
+        recorder,
+        allow: interaction.allow,
+      });
+      try {
+        const interactionPage = await interactionContext.newPage();
+        const interactionWatch = new PageWatch(interactionPage);
+        await interactionPage.goto(interaction.page, { waitUntil: 'load', timeout: GOTO_TIMEOUT_MS });
+        await settle(interactionPage, interactionWatch);
+        const startUrl = pageUrlOrNull(origin, interactionPage.url());
+        if (startUrl !== interaction.page) {
+          recorder.logAction({ interaction: summary, outcome: 'skipped', reason: `landed on ${interactionPage.url()}` });
+          continue;
+        }
+        let startKey = capturedByUrl.get(startUrl);
+        if (startKey === undefined) {
+          const status = interactionWatch.statusFor(origin, startUrl);
+          if (status === null) throw new Error('no document response');
+          startKey = (await recorder.capture(interactionPage, startUrl, status)).key;
+          capturedByUrl.set(startUrl, startKey);
+        }
+
+        for (const { label, value } of interaction.fill) {
+          await interactionPage.getByLabel(label, { exact: true }).fill(value, { timeout: LOCATOR_TIMEOUT_MS });
+        }
+        interactionWatch.reset();
+        await interactionPage.getByRole('button', { name: interaction.click, exact: true }).click({ timeout: LOCATOR_TIMEOUT_MS });
+        await settle(interactionPage, interactionWatch);
+
+        const landingUrl = pageUrlOrNull(origin, interactionPage.url());
+        if (landingUrl === null) throw new Error(`left the origin: ${interactionPage.url()}`);
+        if (landingUrl === startUrl) {
+          recorder.logAction({ interaction: summary, outcome: 'stayed', reason: 'the url did not change' });
+          continue;
+        }
+        const firstUrl = interactionWatch.navigatedUrls.map((url) => pageUrlOrNull(origin, url)).find((url) => url !== null && url !== startUrl);
+        const requested = firstUrl ?? landingUrl;
+        const redirects = buildRedirects({
+          origin,
+          requested,
+          httpUrls: [],
+          navigatedUrls: interactionWatch.navigatedUrls,
+          landing: landingUrl,
+        });
+        const consoleErrors = [...interactionWatch.consoleErrors];
+        let landingKey = capturedByUrl.get(landingUrl);
+        if (landingKey === undefined) {
+          // A client-side navigation has no document response, so reload for the status the page renders with.
+          const status =
+            interactionWatch.statusFor(origin, landingUrl) ??
+            (await interactionPage.reload({ waitUntil: 'load', timeout: GOTO_TIMEOUT_MS }))?.status();
+          if (status === undefined || pageUrlOrNull(origin, interactionPage.url()) !== landingUrl) {
+            throw new Error(`could not capture ${landingUrl}`);
+          }
+          await settle(interactionPage, interactionWatch);
+          landingKey = (await recorder.capture(interactionPage, landingUrl, status)).key;
+          capturedByUrl.set(landingUrl, landingKey);
+        }
+
+        const action: RuntimeAction = { kind: 'interact', page: interaction.page, click: interaction.click, fields };
+        const seq = navigations.length;
+        navigations.push({
+          seq,
+          start: { kind: 'action', from: startKey, action },
+          requested,
+          redirects,
+          landing: { kind: 'captured', capture: landingKey },
+        });
+        recorder.logAction({
+          seq,
+          start: { kind: 'action', from: startKey, action },
+          requested,
+          chain: [requested, ...redirects.map((redirect) => redirect.to)],
+          landing: { capture: landingKey, url: landingUrl },
+          reused: false,
+          consoleErrors,
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? (error.message.split('\n')[0] ?? 'unknown error') : String(error);
+        recorder.logAction({ interaction: summary, outcome: 'failed', reason });
+      } finally {
+        await interactionContext.close();
       }
     }
 
