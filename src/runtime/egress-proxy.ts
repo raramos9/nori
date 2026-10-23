@@ -76,6 +76,8 @@ export async function startEgressProxy({
   });
   server.on('connection', (socket) => {
     sockets.add(socket);
+    // Chrome resets connections it abandons, and a refused CONNECT has no other listener to take the error.
+    socket.on('error', () => undefined);
     socket.on('close', () => sockets.delete(socket));
   });
 
