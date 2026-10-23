@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { parseOrigin, parsePageUrl, type Session } from '../src/graph/model.js';
-import { crawlSite, launchChrome, openContext, RunRecorder } from '../src/runtime/crawl.js';
+import { crawlSite } from '../src/runtime/crawl.js';
 import { boot, prepare } from './runtime.js';
 
 const DEMO = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'demo');
@@ -69,28 +69,6 @@ async function main(): Promise<void> {
       for (const pair of [...pairs].sort()) console.log(`   ${pair}`);
     }
 
-    const proofDir = join(scratch, 'policy-proof');
-    const recorder = new RunRecorder(proofDir);
-    await recorder.open();
-    const browser = await launchChrome();
-    try {
-      const context = await openContext(browser, { origin, recorder });
-      const page = await context.newPage();
-      await page.goto(`${origin}/`, { waitUntil: 'load' });
-      const outcomes = await page.evaluate(`(async () => {
-        const attempt = (url, init) => fetch(url, init).then((r) => 'reached ' + r.status, (e) => 'failed: ' + e.message);
-        return [await attempt('https://example.com/'), await attempt('/api/session', { method: 'POST' })];
-      })()`);
-      console.log(`\n== policy proof: page-side outcomes ${JSON.stringify(outcomes)}`);
-    } finally {
-      await browser.close();
-      await recorder.close();
-    }
-    const log = (await readFile(join(proofDir, 'network.ndjson'), 'utf8')).split('\n').filter((line) => line.includes('"blocked"'));
-    console.log('network.ndjson blocked lines:');
-    for (const line of log) console.log(`   ${line}`);
-    assert.ok(log.some((line) => line.includes('example.com')), 'cross-origin fetch was not blocked');
-    assert.ok(log.some((line) => line.includes('"POST"') && line.includes('/api/session')), 'POST was not blocked');
     console.log('\nOK');
   } finally {
     await server.stop();

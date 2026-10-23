@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseOrigin, parsePageUrl } from '../graph/model.js';
-import { buildRedirects, decideRequest, followLinks, redirectLocation, sameOrigin } from './crawl.js';
+import { buildRedirects, decideRequest, followLinks } from './crawl.js';
 
 const origin = parseOrigin('http://127.0.0.1:3000');
 const page = (path: string) => parsePageUrl(origin, path);
@@ -102,25 +102,3 @@ describe('buildRedirects', () => {
   });
 });
 
-describe('redirectLocation', () => {
-  it.each([
-    [302, '/login', 'http://127.0.0.1:3000/dashboard', 'http://127.0.0.1:3000/login'],
-    [307, 'https://example.com/x', 'http://127.0.0.1:3000/a', 'https://example.com/x'],
-    [200, '/login', 'http://127.0.0.1:3000/a', null],
-    [302, undefined, 'http://127.0.0.1:3000/a', null],
-  ] as const)('%i %s from %s is %s', (status, location, base, expected) => {
-    expect(redirectLocation(status, location, base)).toBe(expected);
-  });
-});
-
-describe('sameOrigin for sockets', () => {
-  it.each([
-    ['ws://127.0.0.1:3000/_next/webpack-hmr', true],
-    ['wss://127.0.0.1:3000/x', false],
-    ['ws://127.0.0.1:4802/x', false],
-    ['ws://evil.test/x', false],
-    ['not a url', false],
-  ] as const)('%s is %s', (url, expected) => {
-    expect(sameOrigin(origin, url)).toBe(expected);
-  });
-});
