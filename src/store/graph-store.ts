@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { Kysely, SqliteDialect, type Selectable } from 'kysely';
-import { stateId } from '../graph/ids.js';
+import { screenId, stateId } from '../graph/ids.js';
 import {
   DEFAULT_STATE_KEY,
   deriveEvidenceStatus,
@@ -17,35 +17,51 @@ import {
   type Build,
   type BuildGraph,
   type BuildId,
+  type CaptureEvidence,
+  type Evidence,
   type LoadedScreen,
   type LoadedTransition,
+  type NavigationEvidence,
   type NonEmpty,
   type Observation,
   type ObservationSubject,
+  type RunIngestion,
+  type RuntimeEvidence,
+  type ScreenObservation,
   type Screen,
   type StaticEvidence,
   type StaticIngestion,
   type Transition,
+  type TransitionObservation,
   type TransitionTarget,
   type Trigger,
   type UIState,
   type Verdict,
 } from '../graph/model.js';
 import { migrateToLatest } from './migrations.js';
+import {
+  captureToRow,
+  navigationToRow,
+  parseCapture,
+  parseNavigation,
+  parseRun,
+  parseScreenMatch,
+  parseTransitionMatch,
+  runToRow,
+} from './runtime-rows.js';
 import type {
   ApplicationsTable,
   BuildsTable,
   Database as Schema,
   EvidenceTable,
   GraphDb,
+  ObservationsTable,
   ScreensTable,
   TransitionsTable,
   UiStatesTable,
 } from './schema.js';
 
 const INSERT_CHUNK_SIZE = 200;
-
-type StaticObservation = { readonly evidence: StaticEvidence; readonly verdict: Verdict };
 
 function* chunks<T>(items: readonly T[]): Generator<readonly T[]> {
   for (let i = 0; i < items.length; i += INSERT_CHUNK_SIZE) {
@@ -179,7 +195,7 @@ function parseStaticEvidence(row: Selectable<EvidenceTable>): StaticEvidence {
   }
 }
 
-function evidenceToRow(evidence: StaticEvidence): Selectable<EvidenceTable> {
+function evidenceToRow(evidence: Evidence): Selectable<EvidenceTable> {
   switch (evidence.kind) {
     case 'static':
       return {
@@ -193,8 +209,21 @@ function evidenceToRow(evidence: StaticEvidence): Selectable<EvidenceTable> {
         span_end_line: evidence.span.end.line,
         span_end_column: evidence.span.end.column,
       };
+    case 'capture':
+    case 'navigation':
+      return {
+        id: evidence.id,
+        build_id: evidence.buildId,
+        kind: evidence.kind,
+        extractor: null,
+        span_file: null,
+        span_start_line: null,
+        span_start_column: null,
+        span_end_line: null,
+        span_end_column: null,
+      };
     default: {
-      const _exhaustive: never = evidence.kind;
+      const _exhaustive: never = evidence;
       return _exhaustive;
     }
   }
@@ -253,13 +282,42 @@ function applicationToRow(application: Application): Selectable<ApplicationsTabl
   return { id: application.id, root_path: application.rootPath, framework: application.framework };
 }
 
-function observationToRow(observation: Observation) {
+function observationToRow(observation: Observation): Selectable<ObservationsTable> {
   return {
     evidence_id: observation.evidenceId,
     subject_kind: observation.subject.kind,
     subject_id: observation.subject.id,
     verdict: observation.verdict,
+    match: null,
   };
+}
+
+function runtimeObservationRows(ingestion: RunIngestion): Selectable<ObservationsTable>[] {
+  const { run, captures, navigations } = ingestion;
+  return [
+    ...captures.flatMap(({ evidence, match }) =>
+      match === null
+        ? []
+        : [
+            {
+              evidence_id: evidence.id,
+              subject_kind: 'screen',
+              subject_id: screenId({ applicationId: run.applicationId, routePattern: match.pattern }),
+              verdict: match.verdict,
+              match: JSON.stringify(match),
+            },
+          ],
+    ),
+    ...navigations.flatMap(({ evidence, matches }) =>
+      matches.map(({ transitionId, match }) => ({
+        evidence_id: evidence.id,
+        subject_kind: 'transition',
+        subject_id: transitionId,
+        verdict: match.verdict,
+        match: JSON.stringify(match),
+      })),
+    ),
+  ];
 }
 
 function buildToRow(build: Build): Selectable<BuildsTable> {
@@ -285,17 +343,67 @@ function supportedSubjectIds(db: GraphDb, buildId: BuildId, subjectKind: Observa
     .where('observations.verdict', '=', 'supports');
 }
 
-function subjectKey(subject: ObservationSubject): string {
-  return `${subject.kind}:${subject.id}`;
+type ObservationRow = Selectable<EvidenceTable> &
+  Pick<Selectable<ObservationsTable>, 'subject_kind' | 'subject_id' | 'verdict' | 'match'>;
+
+type RuntimeEvidenceIndex = {
+  readonly captures: ReadonlyMap<string, CaptureEvidence>;
+  readonly navigations: ReadonlyMap<string, NavigationEvidence>;
+};
+
+type ObservationGroups = {
+  readonly screens: Map<string, [ScreenObservation, ...ScreenObservation[]]>;
+  readonly transitions: Map<string, [TransitionObservation, ...TransitionObservation[]]>;
+};
+
+function runtimeEvidenceOf<E>(index: ReadonlyMap<string, E>, row: ObservationRow): E {
+  const where = (column: string) => `Evidence ${row.id}: ${column} (kind '${row.kind}')`;
+  mustBeNull(row.extractor, where('extractor'));
+  mustBeNull(row.span_file, where('span_file'));
+  const evidence = index.get(row.id);
+  if (evidence === undefined) throw new Error(`Evidence ${row.id}: no ${row.kind} row in a run of its build`);
+  return evidence;
 }
 
-function observationsFor(
-  groups: ReadonlyMap<string, NonEmpty<StaticObservation>>,
-  subject: ObservationSubject,
-): NonEmpty<StaticObservation> {
-  const found = groups.get(subjectKey(subject));
+function groupObservation(row: ObservationRow, runtime: RuntimeEvidenceIndex, groups: ObservationGroups): void {
+  const subject = parseSubject(row.subject_kind, row.subject_id);
+  const verdict = parseVerdict(row.verdict);
+  const where = `Observation of ${subject.kind} ${subject.id} by ${row.id}`;
+  const checked = <M extends { readonly verdict: Verdict }>(match: M): M => {
+    if (match.verdict !== verdict) throw new Error(`${where}: verdict disagrees with its match`);
+    return match;
+  };
+  switch (row.kind) {
+    case 'static': {
+      mustBeNull(row.match, `${where}: match`);
+      const observation = { evidence: parseStaticEvidence(row), verdict };
+      if (subject.kind === 'screen') appendTo(groups.screens, subject.id, observation);
+      else appendTo(groups.transitions, subject.id, observation);
+      return;
+    }
+    case 'capture': {
+      if (subject.kind !== 'screen') throw new Error(`${where}: a capture only observes screens`);
+      const evidence = runtimeEvidenceOf(runtime.captures, row);
+      const match = checked(parseScreenMatch(required(row.match, `${where}: match`), `${where}: match`));
+      appendTo(groups.screens, subject.id, { evidence, match });
+      return;
+    }
+    case 'navigation': {
+      if (subject.kind !== 'transition') throw new Error(`${where}: a navigation only observes transitions`);
+      const evidence = runtimeEvidenceOf(runtime.navigations, row);
+      const match = checked(parseTransitionMatch(required(row.match, `${where}: match`), `${where}: match`));
+      appendTo(groups.transitions, subject.id, { evidence, match });
+      return;
+    }
+    default:
+      throw new Error(`Evidence ${row.id}: unknown kind ${JSON.stringify(row.kind)}`);
+  }
+}
+
+function observationsFor<T>(groups: ReadonlyMap<string, NonEmpty<T>>, subject: ObservationSubject): NonEmpty<T> {
+  const found = groups.get(subject.id);
   if (found === undefined) {
-    throw new Error(`${subjectKey(subject)} is supported in the build but has no observations loaded`);
+    throw new Error(`${subject.kind} ${subject.id} is supported in the build but has no observations loaded`);
   }
   return found;
 }
@@ -379,6 +487,74 @@ export class GraphStore {
     });
   }
 
+  async ingestRun(ingestion: RunIngestion): Promise<void> {
+    const { run, captures, navigations, created } = ingestion;
+    const evidence: readonly RuntimeEvidence[] = [
+      ...captures.map((capture) => capture.evidence),
+      ...navigations.map((navigation) => navigation.evidence),
+    ];
+    for (const item of evidence) {
+      if (item.runId !== run.id || item.buildId !== run.buildId) {
+        throw new Error(`Evidence ${item.id} does not belong to run ${run.id} of build ${run.buildId}`);
+      }
+    }
+    const captureRows = captures.map((capture) => captureToRow(run, capture.evidence));
+    const observationRows = runtimeObservationRows(ingestion);
+
+    await this.db.transaction().execute(async (trx) => {
+      const build = await trx.selectFrom('builds').select('id').where('id', '=', run.buildId).executeTakeFirst();
+      if (build === undefined) throw new Error(`Run ${run.id}: build ${run.buildId} must be ingested first`);
+
+      await trx
+        .insertInto('runs')
+        .values(runToRow(run))
+        .onConflict((oc) => oc.doNothing())
+        .execute();
+      for (const batch of chunks(evidence)) {
+        await trx
+          .insertInto('evidence')
+          .values(batch.map(evidenceToRow))
+          .onConflict((oc) => oc.doNothing())
+          .execute();
+      }
+      for (const batch of chunks(captureRows)) {
+        await trx
+          .insertInto('captures')
+          .values(batch)
+          .onConflict((oc) => oc.doNothing())
+          .execute();
+      }
+      for (const batch of chunks(navigations)) {
+        await trx
+          .insertInto('navigations')
+          .values(batch.map((navigation) => navigationToRow(navigation.evidence)))
+          .onConflict((oc) => oc.doNothing())
+          .execute();
+      }
+      for (const batch of chunks(created)) {
+        await trx
+          .insertInto('transitions')
+          .values(batch.map(transitionToRow))
+          .onConflict((oc) => oc.doNothing())
+          .execute();
+      }
+
+      // Only the current match of a run is kept (PRD 9.2), so a re-ingest replaces its observations.
+      await trx
+        .deleteFrom('observations')
+        .where((eb) =>
+          eb.or([
+            eb('evidence_id', 'in', eb.selectFrom('captures').select('evidence_id').where('run_id', '=', run.id)),
+            eb('evidence_id', 'in', eb.selectFrom('navigations').select('evidence_id').where('run_id', '=', run.id)),
+          ]),
+        )
+        .execute();
+      for (const batch of chunks(observationRows)) {
+        await trx.insertInto('observations').values(batch).execute();
+      }
+    });
+  }
+
   async loadBuildGraph({ buildId }: { buildId: BuildId }): Promise<BuildGraph | null> {
     return this.db.transaction().execute(async (trx) => {
       const buildRow = await trx
@@ -388,22 +564,56 @@ export class GraphStore {
         .executeTakeFirst();
       if (buildRow === undefined) return null;
 
+      const runRows = await trx
+        .selectFrom('runs')
+        .selectAll()
+        .where('build_id', '=', buildId)
+        .orderBy('started_at')
+        .orderBy('id')
+        .execute();
+      const runs = runRows.map(parseRun);
+      const runById = new Map(runs.map((run) => [run.id as string, run]));
+      const runOf = (id: string) => {
+        const run = runById.get(id);
+        if (run === undefined) throw new Error(`Run ${id} is not a run of build ${buildId}`);
+        return run;
+      };
+
+      const captureRows = await trx
+        .selectFrom('captures')
+        .innerJoin('runs', 'runs.id', 'captures.run_id')
+        .selectAll('captures')
+        .where('runs.build_id', '=', buildId)
+        .orderBy('captures.evidence_id')
+        .execute();
+      const captures = new Map(captureRows.map((row) => [row.evidence_id, parseCapture(runOf(row.run_id), row)]));
+      const navigationRows = await trx
+        .selectFrom('navigations')
+        .innerJoin('runs', 'runs.id', 'navigations.run_id')
+        .selectAll('navigations')
+        .where('runs.build_id', '=', buildId)
+        .orderBy('navigations.evidence_id')
+        .execute();
+      const navigations = new Map(
+        navigationRows.map((row) => [row.evidence_id, parseNavigation(runOf(row.run_id), row, captures)]),
+      );
+
       const observationRows = await trx
         .selectFrom('observations')
         .innerJoin('evidence', 'evidence.id', 'observations.evidence_id')
         .selectAll('evidence')
-        .select(['observations.subject_kind', 'observations.subject_id', 'observations.verdict'])
+        .select([
+          'observations.subject_kind',
+          'observations.subject_id',
+          'observations.verdict',
+          'observations.match',
+        ])
         .where('evidence.build_id', '=', buildId)
         .orderBy('evidence.id')
         .execute();
 
-      const groups = new Map<string, [StaticObservation, ...StaticObservation[]]>();
-      for (const row of observationRows) {
-        appendTo(groups, subjectKey(parseSubject(row.subject_kind, row.subject_id)), {
-          evidence: parseStaticEvidence(row),
-          verdict: parseVerdict(row.verdict),
-        });
-      }
+      const groups: ObservationGroups = { screens: new Map(), transitions: new Map() };
+      for (const row of observationRows) groupObservation(row, { captures, navigations }, groups);
 
       const screenRows = await trx
         .selectFrom('screens')
@@ -431,17 +641,17 @@ export class GraphStore {
         const screen = parseScreen(row);
         const states = statesByScreen.get(screen.id);
         if (states === undefined) throw new Error(`Screen ${screen.id} has no states`);
-        const observations = observationsFor(groups, { kind: 'screen', id: screen.id });
+        const observations = observationsFor(groups.screens, { kind: 'screen', id: screen.id });
         return { screen, states, observations, status: deriveEvidenceStatus(observations) };
       });
 
       const loadedTransitions = transitionRows.map((row): LoadedTransition => {
         const transition = parseTransition(row);
-        const observations = observationsFor(groups, { kind: 'transition', id: transition.id });
+        const observations = observationsFor(groups.transitions, { kind: 'transition', id: transition.id });
         return { transition, observations, status: deriveEvidenceStatus(observations) };
       });
 
-      return { build: parseBuild(buildRow), runs: [], screens, transitions: loadedTransitions };
+      return { build: parseBuild(buildRow), runs, screens, transitions: loadedTransitions };
     });
   }
 

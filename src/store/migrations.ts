@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import { Migrator, type Migration, type MigrationProvider } from 'kysely/migration';
 
 const initial: Migration = {
@@ -87,9 +87,69 @@ const initial: Migration = {
   },
 };
 
+// JSON columns are text the store parses itself; no JSON functions, so the DDL stays portable.
+const runtimeEvidence: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('runs')
+      .addColumn('id', 'text', (c) => c.primaryKey())
+      .addColumn('application_id', 'text', (c) => c.notNull().references('applications.id'))
+      .addColumn('build_id', 'text', (c) => c.notNull().references('builds.id'))
+      .addColumn('origin', 'text', (c) => c.notNull())
+      .addColumn('session_kind', 'text', (c) => c.notNull())
+      .addColumn('session_label', 'text', (c) => c.notNull())
+      .addColumn('started_at', 'text', (c) => c.notNull())
+      .addColumn('finished_at', 'text', (c) => c.notNull())
+      .addColumn('stop', 'text', (c) => c.notNull())
+      .addColumn('crawler_version', 'text', (c) => c.notNull())
+      .addColumn('reconciler_version', 'text', (c) => c.notNull())
+      .addColumn('requests_allowed', 'integer', (c) => c.notNull())
+      .addColumn('requests_blocked', 'integer', (c) => c.notNull())
+      .execute();
+    await db.schema.createIndex('runs_build_idx').on('runs').column('build_id').execute();
+
+    await db.schema
+      .createTable('captures')
+      .addColumn('evidence_id', 'text', (c) => c.primaryKey().references('evidence.id'))
+      .addColumn('run_id', 'text', (c) => c.notNull().references('runs.id'))
+      .addColumn('url', 'text', (c) => c.notNull())
+      .addColumn('http_status', 'integer', (c) => c.notNull())
+      .addColumn('screenshot_path', 'text', (c) => c.notNull())
+      .addColumn('dom_path', 'text', (c) => c.notNull())
+      .addUniqueConstraint('captures_run_url', ['run_id', 'url'])
+      .execute();
+
+    await db.schema
+      .createTable('navigations')
+      .addColumn('evidence_id', 'text', (c) => c.primaryKey().references('evidence.id'))
+      .addColumn('run_id', 'text', (c) => c.notNull().references('runs.id'))
+      .addColumn('start_kind', 'text', (c) => c.notNull())
+      .addColumn('from_capture_id', 'text', (c) => c.references('captures.evidence_id'))
+      .addColumn('action_kind', 'text')
+      .addColumn('action', 'text')
+      .addColumn('requested_url', 'text', (c) => c.notNull())
+      .addColumn('redirects', 'text', (c) => c.notNull())
+      .addColumn('landing_capture_id', 'text', (c) => c.notNull().references('captures.evidence_id'))
+      .addColumn('log_seq', 'integer', (c) => c.notNull())
+      .addCheckConstraint(
+        'navigations_start',
+        sql`(start_kind = 'entry' and from_capture_id is null and action_kind is null and action is null)
+          or (start_kind = 'action' and from_capture_id is not null and action_kind is not null and action is not null)`,
+      )
+      .execute();
+
+    await db.schema.alterTable('observations').addColumn('match', 'text').execute();
+  },
+};
+
+export const MIGRATIONS: Readonly<Record<string, Migration>> = {
+  '001_initial': initial,
+  '002_runtime_evidence': runtimeEvidence,
+};
+
 const provider: MigrationProvider = {
   async getMigrations() {
-    return { '001_initial': initial };
+    return { ...MIGRATIONS };
   },
 };
 
