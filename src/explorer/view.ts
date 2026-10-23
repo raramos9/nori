@@ -1,4 +1,4 @@
-import { mayExplain } from '../graph/model.js';
+import { mayExplain, verdictOf } from '../graph/model.js';
 import type {
   BuildGraph,
   EvidenceId,
@@ -146,7 +146,7 @@ function captures(
             session: sessionOf(evidence.runId),
             url: evidence.url,
             httpStatus: evidence.httpStatus,
-            verdict: 'match' in observation ? observation.match.verdict : observation.verdict,
+            verdict: verdictOf(observation),
             screenshotPath: evidence.screenshot,
             domPath: evidence.dom,
           },
@@ -249,7 +249,7 @@ export function toExplorerGraph({ root, graph }: { root: string; graph: BuildGra
         walks: transitionWalks,
         runtimeOnly,
         observedIn: [...new Set(transitionWalks.map((walk) => walk.session))].sort(),
-        mayExplain: mayExplain(graph, transition.id),
+        mayExplain: runtimeOnly ? mayExplain(graph, transition.id) : [],
       };
     }),
     runs: graph.runs.map((run) => ({
