@@ -5,6 +5,7 @@ import { type Browser, type BrowserContext, chromium, errors, type Page, type Re
 import { z } from 'zod';
 import { NoriError } from '../errors.js';
 import { type Origin, type PageUrl, parsePageUrl, type Session } from '../graph/model.js';
+import { type EgressDecision, startEgressProxy } from './egress-proxy.js';
 import type {
   CaptureKey,
   CrawledCapture,
@@ -26,6 +27,10 @@ const POLL_MS = 100;
 
 export type RequestDecision = 'allowed' | 'blocked' | 'internal';
 
+// A connection the egress proxy turned away. Most are Chrome's own background traffic, which no page
+// asked for, so they are logged apart from the page requests the policy blocked.
+type LoggedDecision = RequestDecision | 'refused';
+
 // The browser's own resources (its PDF viewer, data and blob URLs) never reach the network.
 const INTERNAL_SCHEMES = new Set(['chrome:', 'chrome-extension:', 'data:', 'blob:']);
 
@@ -34,26 +39,6 @@ function originOf(url: string): string | null {
     return new URL(url).origin;
   } catch {
     return null;
-  }
-}
-
-export function redirectLocation(status: number, location: string | undefined, base: string): string | null {
-  if (status < 300 || status >= 400 || location === undefined) return null;
-  try {
-    return new URL(location, base).href;
-  } catch {
-    return location;
-  }
-}
-
-// ws://host is the http://host origin for this policy; the dev server's HMR socket lives there.
-export function sameOrigin(origin: Origin, socketUrl: string): boolean {
-  try {
-    const url = new URL(socketUrl);
-    const scheme = { 'ws:': 'http:', 'wss:': 'https:' }[url.protocol];
-    return scheme !== undefined && `${scheme}//${url.host}` === origin;
-  } catch {
-    return false;
   }
 }
 
@@ -119,7 +104,7 @@ export function buildRedirects(args: {
   return redirects;
 }
 
-type NetworkEntry = { readonly method: string; readonly url: string; readonly decision: RequestDecision; status?: number };
+type NetworkEntry = { readonly method: string; readonly url: string; readonly decision: LoggedDecision; status?: number };
 
 type ActionEntry = {
   readonly seq: number;
@@ -152,12 +137,8 @@ export class RunRecorder {
     this.byRequest.set(request, entry);
   }
 
-  logBlockedRedirect(method: string, url: string): void {
-    this.network.push({ method, url, decision: 'blocked' });
-  }
-
-  logWebSocket(url: string, decision: RequestDecision): void {
-    this.network.push({ method: 'WEBSOCKET', url, decision });
+  logRefusedConnection({ method, target }: EgressDecision): void {
+    this.network.push({ method, url: target, decision: 'refused' });
   }
 
   logStatus(request: Request, status: number): void {
@@ -170,7 +151,7 @@ export class RunRecorder {
   }
 
   counts(): { allowed: number; blocked: number } {
-    const count = (decision: RequestDecision) => this.network.filter((entry) => entry.decision === decision).length;
+    const count = (decision: LoggedDecision) => this.network.filter((entry) => entry.decision === decision).length;
     return { allowed: count('allowed'), blocked: count('blocked') };
   }
 
@@ -199,14 +180,45 @@ export class RunRecorder {
   }
 }
 
-export async function launchChrome(): Promise<Browser> {
+async function launchChrome(proxyServer: string): Promise<Browser> {
   try {
-    return await chromium.launch({ channel: 'chrome', headless: true });
+    return await chromium.launch({
+      channel: 'chrome',
+      headless: true,
+      proxy: { server: proxyServer },
+      args: ['--disable-component-update', '--disable-sync', '--disable-features=OptimizationHints,AutofillServerCommunication'],
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (/distribution 'chrome' is not found|Executable doesn't exist/.test(message)) {
       throw new NoriError('Google Chrome is not installed, and nori verify drives the system Chrome. Install Chrome and retry.');
     }
+    throw error;
+  }
+}
+
+export type IsolatedBrowser = { readonly browser: Browser; readonly close: () => Promise<void> };
+
+// Chrome reaches the network only through a proxy that admits the run's origin, and Playwright
+// routes loopback through it too, so a local app gets the same guarantee as a remote one.
+export async function launchIsolatedBrowser({ origin, recorder }: { origin: Origin; recorder: RunRecorder }): Promise<IsolatedBrowser> {
+  const proxy = await startEgressProxy({
+    origin,
+    onDecision: (decision) => {
+      if (!decision.allowed) recorder.logRefusedConnection(decision);
+    },
+  });
+  try {
+    const browser = await launchChrome(proxy.server);
+    return {
+      browser,
+      close: async () => {
+        await browser.close();
+        await proxy.close();
+      },
+    };
+  } catch (error) {
+    await proxy.close();
     throw error;
   }
 }
@@ -224,22 +236,7 @@ export async function openContext(
     const decision = decideRequest(args.origin, request.method(), request.url());
     args.recorder.logRequest(request, decision);
     if (decision === 'blocked') return route.abort('blockedbyclient');
-    if (decision === 'internal') return route.continue();
-    // The browser follows a redirect without asking this handler again, so the hop is fetched here
-    // and its Location must pass the policy before the browser sees it.
-    const response = await route.fetch({ maxRedirects: 0 });
-    const location = redirectLocation(response.status(), response.headers()['location'], request.url());
-    if (location !== null && decideRequest(args.origin, request.method(), location) !== 'allowed') {
-      args.recorder.logBlockedRedirect(request.method(), location);
-      return route.abort('blockedbyclient');
-    }
-    return route.fulfill({ response });
-  });
-  await context.routeWebSocket(/.*/, (socket) => {
-    const allowed = sameOrigin(args.origin, socket.url());
-    args.recorder.logWebSocket(socket.url(), allowed ? 'allowed' : 'blocked');
-    if (allowed) socket.connectToServer();
-    else void socket.close({ code: 1008, reason: 'blocked by nori' });
+    return route.continue();
   });
   context.on('response', (response) => args.recorder.logStatus(response.request(), response.status()));
   return context;
@@ -333,7 +330,7 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
   const startedAt = new Date();
   const recorder = new RunRecorder(options.dir);
   await recorder.open();
-  const browser = await launchChrome();
+  const { browser, close } = await launchIsolatedBrowser({ origin, recorder });
   try {
     const context = await openContext(browser, { origin, storageStatePath: options.storageStatePath, recorder });
     const page = await context.newPage();
@@ -435,7 +432,7 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
       navigations,
     };
   } finally {
-    await browser.close();
+    await close();
     await recorder.close();
   }
 }
