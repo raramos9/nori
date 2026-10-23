@@ -5,7 +5,7 @@ import { readVersion } from '../version.js';
 import { readSnippet } from '../explorer/source.js';
 import type { ExplorerTransition } from '../explorer/view.js';
 import type { Served } from './live.js';
-import type { GraphIndex } from './snapshot.js';
+import { primaryScreenshot, type GraphIndex } from './snapshot.js';
 
 const READ_ONLY = { readOnlyHint: true, openWorldHint: false } as const;
 
@@ -56,11 +56,30 @@ const targetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('unresolved'), reason: z.string(), expression: z.string() }),
 ]);
 
+const walkSchema = z.object({
+  evidenceId: z.string(),
+  runId: z.string(),
+  session: z.string(),
+  rule: z.string().describe('How the crawl matched this walk to the transition'),
+  hop: z.number().nullable().describe('For a redirect rule, the index of the redirect hop that this transition is'),
+  requested: z.string(),
+  redirects: z.array(z.object({ to: z.string(), via: z.enum(['http', 'client']) })),
+  skipped: z.array(z.object({ url: z.string(), why: z.string() })).describe('Hops passed through without being a screen'),
+  landing: z.object({ evidenceId: z.string(), url: z.string(), screenshotPath: z.string() }),
+});
+
 const transitionShape = {
   id: z.string(),
   trigger: z.string(),
   status: statusSchema,
   sources: z.array(sourceSchema),
+  runtimeOnly: z.boolean().describe('Seen in a crawl but not in the static analysis, so sources is empty'),
+  observedIn: z.array(z.string()).describe("Sessions whose crawl walked this transition: 'anonymous' or a storage-state label"),
+  walks: z.array(walkSchema),
+  mayExplain: z
+    .array(z.string())
+    .optional()
+    .describe('Runtime-only transitions only: ids of unresolved static transitions from the same screen with the same trigger that this walk may be'),
 };
 
 function respond(structuredContent: Record<string, unknown>): CallToolResult {
@@ -78,6 +97,10 @@ export function createMcpServer({ current, realRoot }: { current: () => Promise<
     trigger: transition.trigger,
     status: transition.status,
     sources: transition.sources,
+    runtimeOnly: transition.runtimeOnly,
+    observedIn: transition.observedIn,
+    walks: transition.walks,
+    ...(transition.runtimeOnly ? { mayExplain: transition.mayExplain } : {}),
   });
   const buildInfo = ({ snapshot, refreshError }: Served) => ({
     id: snapshot.graph.build.id,
@@ -93,13 +116,14 @@ export function createMcpServer({ current, realRoot }: { current: () => Promise<
     'list_screens',
     {
       description:
-        'List every screen found in the analyzed Next.js app, sorted by route, with its evidence status and how many navigation transitions leave it. Start here, then call get_screen with a screen id for its transitions and evidence sources.',
+        'List every screen found in the analyzed Next.js app, sorted by route, with its evidence status and how many navigation transitions leave it. screenshotPath is a crawled screenshot of the screen (a PNG you can Read), or null if no crawl rendered it. Start here, then call get_screen with a screen id for its transitions and evidence.',
       annotations: READ_ONLY,
       outputSchema: {
         build: buildSchema,
         screens: z.array(
           screenSchema.omit({ sources: true, captures: true }).extend({
             outgoing: z.number().describe('Transitions leaving this screen'),
+            screenshotPath: z.string().nullable().describe('Absolute path to a PNG of the crawled screen; Read it to see the page'),
             unresolvedOutgoing: z
               .number()
               .describe('Of those, navigation calls the static analysis could not pin to a route'),
@@ -121,6 +145,7 @@ export function createMcpServer({ current, realRoot }: { current: () => Promise<
               route: screen.route,
               status: screen.status,
               outgoing: leaving.length,
+              screenshotPath: primaryScreenshot(screen),
               unresolvedOutgoing: leaving.filter(({ target }) => target.kind === 'unresolved').length,
             };
           }),
@@ -132,7 +157,7 @@ export function createMcpServer({ current, realRoot }: { current: () => Promise<
     'get_screen',
     {
       description:
-        'Get one screen with the transitions leaving it and arriving at it. An unresolved target is a navigation call the static analysis could not pin to a route; its expression is the source text. Pass any sources[].evidenceId to read_source.',
+        'Get one screen with the transitions leaving it and arriving at it. An unresolved target is a navigation call the static analysis could not pin to a route; its expression is the source text. screen.captures[] are the crawled renders: Read a screenshotPath to see the page, or domPath for its HTML. Transitions seen only at runtime have runtimeOnly set; observedIn and walks say which sessions walked them. Pass any sources[].evidenceId to read_source.',
       annotations: READ_ONLY,
       inputSchema: { screenId: z.string().describe('A screen id from list_screens') },
       outputSchema: {

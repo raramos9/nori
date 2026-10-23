@@ -6,8 +6,8 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openLiveSnapshot } from '../commands/mcp.js';
 import { exploreGraph } from '../commands/explore.js';
-import { toExplorerGraph, type ExplorerGraph } from '../explorer/view.js';
-import { parseCommitSha } from '../graph/model.js';
+import { toExplorerGraph, type ExplorerCapture, type ExplorerGraph, type ExplorerWalk } from '../explorer/view.js';
+import { parseCommitSha, parseEvidenceId, parseRunId } from '../graph/model.js';
 import { gitFixture } from '../testing/git-fixture.js';
 import { createMcpServer } from './server.js';
 import { createSnapshot } from './snapshot.js';
@@ -80,6 +80,75 @@ describe('nori MCP server', () => {
     const snippet = source.structuredContent as { file: string; extractor: string; startLine: number; lines: string[] };
     expect(snippet.file).toBe('app/page.tsx');
     expect(snippet.lines.join('\n')).toContain('<Link href={target}>');
+  });
+
+  it('surfaces captures, walks and the screenshot path of runtime evidence', async () => {
+    const { root, graph } = await analyze();
+    const runId = parseRunId('run_0000000000000001');
+    const captureFor = (n: number, session: string, verdict: ExplorerCapture['verdict']): ExplorerCapture => ({
+      evidenceId: parseEvidenceId(`evd_00000000000000${n}0`),
+      runId,
+      session,
+      url: 'http://localhost:3000/',
+      httpStatus: 200,
+      verdict,
+      screenshotPath: `/runs/${session}-${n}.png`,
+      domPath: `/runs/${session}-${n}.html`,
+    });
+    const walk = (session: string): ExplorerWalk => ({
+      evidenceId: parseEvidenceId('evd_0000000000000099'),
+      runId,
+      session,
+      rule: 'action-runtime-only',
+      hop: null,
+      requested: 'http://localhost:3000/about',
+      redirects: [],
+      skipped: [],
+      landing: { evidenceId: parseEvidenceId('evd_0000000000000098'), url: 'http://localhost:3000/about', screenshotPath: '/runs/landing.png' },
+    });
+    const unresolved = graph.transitions.find(({ target }) => target.kind === 'unresolved')!;
+    const forged: ExplorerGraph = {
+      ...graph,
+      screens: graph.screens.map((screen) =>
+        screen.route === '/'
+          ? {
+              ...screen,
+              captures: [captureFor(3, 'signed-in', 'supports'), captureFor(2, 'anonymous', 'contradicts'), captureFor(1, 'anonymous', 'supports')],
+            }
+          : screen,
+      ),
+      transitions: graph.transitions.map((transition) =>
+        transition.id === unresolved.id
+          ? transition
+          : transition.sourceScreenId === unresolved.sourceScreenId
+            ? { ...transition, runtimeOnly: true, observedIn: ['anonymous', 'signed-in'], walks: [walk('anonymous'), walk('signed-in')], mayExplain: [unresolved.id] }
+            : transition,
+      ),
+    };
+    const client = await connect({ graph: forged, realRoot: root });
+
+    const listed = (await client.callTool({ name: 'list_screens' })).structuredContent as {
+      screens: { route: string; screenshotPath: string | null }[];
+    };
+    expect(listed.screens.map(({ route, screenshotPath }) => [route, screenshotPath])).toEqual([
+      ['/', '/runs/anonymous-1.png'],
+      ['/about', null],
+    ]);
+    expect(listed.screens[0]).not.toHaveProperty('captures');
+
+    const home = forged.screens.find(({ route }) => route === '/')!;
+    const detail = (await client.callTool({ name: 'get_screen', arguments: { screenId: home.id } })).structuredContent as {
+      screen: { captures: { session: string; screenshotPath: string }[] };
+      outgoing: { id: string; runtimeOnly: boolean; observedIn: string[]; walks: { session: string; landing: { screenshotPath: string } }[]; mayExplain?: string[] }[];
+    };
+    expect(detail.screen.captures.map(({ session }) => session)).toEqual(['signed-in', 'anonymous', 'anonymous']);
+    const runtimeOnly = detail.outgoing.find(({ runtimeOnly: only }) => only)!;
+    expect(runtimeOnly).toMatchObject({ observedIn: ['anonymous', 'signed-in'], mayExplain: [unresolved.id] });
+    expect(runtimeOnly.walks.map(({ session }) => session)).toEqual(['anonymous', 'signed-in']);
+    expect(runtimeOnly.walks[0]?.landing.screenshotPath).toBe('/runs/landing.png');
+    const explained = detail.outgoing.find(({ id }) => id === unresolved.id)!;
+    expect(explained).toMatchObject({ runtimeOnly: false, observedIn: [], walks: [] });
+    expect(explained).not.toHaveProperty('mayExplain');
   });
 
   it('shows the linking screen as incoming on the target', async () => {
