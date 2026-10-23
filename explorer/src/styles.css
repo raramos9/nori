@@ -176,6 +176,13 @@ button { font: inherit; color: inherit; }
 .source .linkish { font-size: 12px; word-break: break-all; }
 .caret { display: inline-block; width: 12px; color: var(--ink-3); }
 .editor { font-size: 11px; color: var(--ink-3); }
+.badge.runtime-only { color: var(--observed); margin-left: 6px; }
+.captures { display: grid; gap: 10px; }
+.capture { margin: 0; }
+.capture figcaption { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }
+.capture-url { color: var(--ink-3); word-break: break-all; flex: 1; }
+.capture img { display: block; max-width: 100%; height: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); }
+.may-explain ul { margin: 2px 0 6px; padding-left: 16px; }
 .snippet { margin: 4px 0 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); overflow-x: auto; }
 .snippet pre { margin: 0; padding: 6px 0; font: 11.5px/1.5 var(--mono); }
 .snippet .line { display: flex; gap: 10px; padding: 0 10px; white-space: pre; }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ExplorerGraph, ExplorerTransition, SourceRef } from '../../src/explorer/view.js';
+import type { ExplorerCapture, ExplorerGraph, ExplorerTransition, SourceRef } from '../../src/explorer/view.js';
 import type { ScreenId } from '../../src/graph/model.js';
 import { fetchSnippet, type SourceSnippet } from './api.js';
 import type { Ghost, GraphIndex, Link, Selection } from './flow.js';
@@ -89,12 +89,34 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`badge status-${status}`}>{status}</span>;
 }
 
+function Captures({ captures }: { captures: readonly ExplorerCapture[] }) {
+  return (
+    <div className="captures">
+      {captures.map((capture) => (
+        <figure key={capture.evidenceId} className="capture">
+          <figcaption>
+            <span className="badge">{capture.session}</span>
+            {capture.verdict === 'contradicts' ? <span className="badge status-failed">{capture.httpStatus}</span> : null}
+            <span className="mono small capture-url">{capture.url}</span>
+            <a className="editor" href={`/artifacts/${capture.evidenceId}/dom`} target="_blank" rel="noreferrer">
+              DOM
+            </a>
+          </figcaption>
+          <img src={`/artifacts/${capture.evidenceId}/screenshot`} alt={`${capture.session} capture of ${capture.url}`} loading="lazy" />
+        </figure>
+      ))}
+    </div>
+  );
+}
+
 function TransitionCall({
   transition,
   root,
+  expressions,
 }: {
   transition: ExplorerTransition;
   root: string;
+  expressions: ReadonlyMap<string, string>;
 }) {
   const { target } = transition;
   return (
@@ -102,7 +124,23 @@ function TransitionCall({
       <div className="call-head">
         <span className="trigger">{transition.trigger}</span>
         <StatusBadge status={transition.status} />
+        {transition.runtimeOnly ? <span className="badge runtime-only">runtime only</span> : null}
       </div>
+      {transition.observedIn.length > 0 ? (
+        <p className="muted small">Observed in {transition.observedIn.join(', ')}</p>
+      ) : null}
+      {transition.runtimeOnly && transition.mayExplain.length > 0 ? (
+        <div className="may-explain">
+          <p className="muted small">May be one of these unresolved calls on the same screen</p>
+          <ul>
+            {transition.mayExplain.map((id) => (
+              <li key={id}>
+                <code className="expression">{expressions.get(id) ?? id}</code>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {target.kind === 'unresolved' ? (
         <div className="unresolved-detail">
           <span className="reason">{target.reason}</span>
@@ -116,6 +154,9 @@ function TransitionCall({
 
 export function SidePanel({ graph, index, selection, links, ghosts, onSelectScreen, onClose }: Props) {
   const { root } = graph;
+  const expressions = new Map(
+    graph.transitions.flatMap(({ id, target }): [string, string][] => (target.kind === 'unresolved' ? [[id, target.expression]] : [])),
+  );
   let body: React.ReactNode;
   let title: string;
   let kicker: string;
@@ -135,6 +176,12 @@ export function SidePanel({ graph, index, selection, links, ghosts, onSelectScre
           </p>
           <h3>Defined in</h3>
           <Sources root={root} sources={screen.sources} />
+          {screen.captures.length > 0 ? (
+            <>
+              <h3>Captured ({screen.captures.length})</h3>
+              <Captures captures={screen.captures} />
+            </>
+          ) : null}
           <h3>Outgoing ({outgoing.length})</h3>
           {outgoing.length === 0 ? <p className="muted">No navigation found on this screen.</p> : null}
           <ul className="calls">
@@ -152,6 +199,7 @@ export function SidePanel({ graph, index, selection, links, ghosts, onSelectScre
                     <TransitionCall
                       transition={transition}
                       root={root}
+                      expressions={expressions}
                     />
                   </ul>
                 </li>
@@ -186,6 +234,7 @@ export function SidePanel({ graph, index, selection, links, ghosts, onSelectScre
                 key={transition.id}
                 transition={transition}
                 root={root}
+                expressions={expressions}
               />
             ))}
           </ul>
@@ -211,6 +260,7 @@ export function SidePanel({ graph, index, selection, links, ghosts, onSelectScre
                 key={transition.id}
                 transition={transition}
                 root={root}
+                expressions={expressions}
               />
             ))}
           </ul>
