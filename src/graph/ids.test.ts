@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applicationId, buildId, evidenceId, screenId, stateId, transitionId } from './ids.js';
-import { parseCommitSha, parseRoutePattern } from './model.js';
+import { applicationId, buildId, evidenceId, runId, screenId, stateId, transitionId } from './ids.js';
+import { parseCommitSha, parseOrigin, parsePageUrl, parseRoutePattern } from './model.js';
 
 const app = applicationId({ rootPath: '/repo/web' });
 const sha = parseCommitSha('a'.repeat(40));
@@ -54,6 +54,41 @@ describe('id derivation', () => {
     expect(evidenceId(base)).not.toBe(evidenceId({ ...base, extractor: 'router' }));
     expect(evidenceId(base)).not.toBe(
       evidenceId({ ...base, span: { ...span, end: { line: 1, column: 10 } } }),
+    );
+  });
+
+  it('keys runs on build, origin, session and start time', () => {
+    const build = buildId({ applicationId: app, commitSha: sha, sourceHash, analyzerVersion: '1' });
+    const base = {
+      buildId: build,
+      origin: parseOrigin('http://localhost:3000'),
+      session: { kind: 'anonymous' } as const,
+      startedAt: new Date(0),
+    };
+    expect(runId(base)).toMatch(/^run_[0-9a-f]{16}$/);
+    expect(runId(base)).toBe(runId({ ...base, startedAt: new Date(0) }));
+    expect(runId(base)).not.toBe(runId({ ...base, startedAt: new Date(1) }));
+    expect(runId(base)).not.toBe(runId({ ...base, origin: parseOrigin('http://localhost:3001') }));
+    expect(runId(base)).not.toBe(runId({ ...base, session: { kind: 'storage-state', label: 'anonymous' } }));
+  });
+
+  it('keys navigations on where they started and what they requested, not on the link name', () => {
+    const build = buildId({ applicationId: app, commitSha: sha, sourceHash, analyzerVersion: '1' });
+    const origin = parseOrigin('http://localhost:3000');
+    const url = (path: string) => parsePageUrl(origin, path);
+    const run = runId({ buildId: build, origin, session: { kind: 'anonymous' }, startedAt: new Date(0) });
+    const from = { evidenceId: evidenceId({ kind: 'capture', buildId: build, runId: run, url: url('/') }), url: url('/') };
+    const follow = (name: string | null) =>
+      ({
+        kind: 'navigation',
+        buildId: build,
+        runId: run,
+        requested: url('/home'),
+        start: { kind: 'action', from, action: { kind: 'follow-link', href: url('/home'), name } },
+      }) as const;
+    expect(evidenceId(follow('Open app'))).toBe(evidenceId(follow(null)));
+    expect(evidenceId(follow(null))).not.toBe(
+      evidenceId({ kind: 'navigation', buildId: build, runId: run, requested: url('/home'), start: { kind: 'entry' } }),
     );
   });
 });

@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { applicationId, buildId, evidenceId } from './ids.js';
+import { applicationId, buildId, evidenceId, runId } from './ids.js';
 import {
   parseOrigin,
   parsePageUrl,
   deriveEvidenceStatus,
   parseCommitSha,
   parseRoutePattern,
-  type EvidenceObservation,
+  parseArtifactPath,
+  type ScreenObservation,
 } from './model.js';
 
 describe('brand parsers', () => {
@@ -28,21 +29,49 @@ describe('brand parsers', () => {
 });
 
 describe('deriveEvidenceStatus', () => {
-  it('infers from static evidence, including when contradicted', () => {
-    const app = applicationId({ rootPath: '/r' });
-    const build = buildId({
-      applicationId: app,
-      commitSha: parseCommitSha('a'.repeat(40)),
-      sourceHash: 'c'.repeat(64),
-      analyzerVersion: '1',
-    });
-    const span = { file: 'a.tsx', start: { line: 1, column: 0 }, end: { line: 1, column: 1 } };
-    const identity = { kind: 'static', buildId: build, span, extractor: 'x' } as const;
-    const evidence = { ...identity, id: evidenceId(identity) };
-    const supports: EvidenceObservation = { evidence, verdict: 'supports' };
-    const contradicts: EvidenceObservation = { evidence, verdict: 'contradicts' };
-    expect(deriveEvidenceStatus([supports])).toBe('inferred');
-    expect(deriveEvidenceStatus([supports, contradicts])).toBe('inferred');
+  const app = applicationId({ rootPath: '/r' });
+  const build = buildId({
+    applicationId: app,
+    commitSha: parseCommitSha('a'.repeat(40)),
+    sourceHash: 'c'.repeat(64),
+    analyzerVersion: '1',
+  });
+  const span = { file: 'a.tsx', start: { line: 1, column: 0 }, end: { line: 1, column: 1 } };
+  const staticIdentity = { kind: 'static', buildId: build, span, extractor: 'x' } as const;
+  const staticEvidence = { ...staticIdentity, id: evidenceId(staticIdentity) };
+  const origin = parseOrigin('http://localhost:3000');
+  const url = parsePageUrl(origin, '/settings');
+  const run = runId({ buildId: build, origin, session: { kind: 'anonymous' }, startedAt: new Date(0) });
+  const captureIdentity = { kind: 'capture', buildId: build, runId: run, url } as const;
+  const capture = (httpStatus: number) => ({
+    ...captureIdentity,
+    id: evidenceId(captureIdentity),
+    httpStatus,
+    screenshot: parseArtifactPath('/home/runs/r/captures/a.png'),
+    dom: parseArtifactPath('/home/runs/r/captures/a.html'),
+  });
+  const pattern = parseRoutePattern('/settings');
+
+  const staticSupports: ScreenObservation = { evidence: staticEvidence, verdict: 'supports' };
+  const staticContradicts: ScreenObservation = { evidence: staticEvidence, verdict: 'contradicts' };
+  const rendered: ScreenObservation = {
+    evidence: capture(200),
+    match: { verdict: 'supports', rule: 'rendered', url, pattern },
+  };
+  const serverError: ScreenObservation = {
+    evidence: capture(500),
+    match: { verdict: 'contradicts', rule: 'server-error', url, pattern, httpStatus: 500 },
+  };
+
+  it.each([
+    ['static only', [staticSupports], 'inferred'],
+    ['static, including a contradiction', [staticSupports, staticContradicts], 'inferred'],
+    ['runtime supports', [staticSupports, rendered], 'observed'],
+    ['runtime supports with no static evidence', [rendered], 'observed'],
+    ['a 5xx capture contradicts', [staticSupports, serverError], 'failed'],
+    ['a 5xx capture beside a rendered one', [rendered, serverError, staticSupports], 'failed'],
+  ] as const)('%s', (_, observations, expected) => {
+    expect(deriveEvidenceStatus(observations)).toBe(expected);
   });
 });
 

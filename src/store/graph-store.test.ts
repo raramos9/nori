@@ -9,8 +9,9 @@ import {
   parseCommitSha,
   parseRoutePattern,
   UNRESOLVED_REASONS,
+  verdictOf,
   type Build,
-  type Evidence,
+  type StaticEvidence,
   type Observation,
   type Screen,
   type StaticIngestion,
@@ -44,7 +45,7 @@ function build(commit: string): Build {
   };
 }
 
-function staticEvidence(b: Build, file: string, line: number): Evidence {
+function staticEvidence(b: Build, file: string, line: number): StaticEvidence {
   const identity = {
     kind: 'static',
     buildId: b.id,
@@ -54,7 +55,7 @@ function staticEvidence(b: Build, file: string, line: number): Evidence {
   return { ...identity, id: evidenceId(identity) };
 }
 
-function supports(evidence: Evidence, subject: Observation['subject']): Observation {
+function supports(evidence: StaticEvidence, subject: Observation['subject']): Observation {
   return { evidenceId: evidence.id, subject, verdict: 'supports' };
 }
 
@@ -226,7 +227,7 @@ describe('GraphStore', () => {
 
     const graph = await store.loadBuildGraph({ buildId: input.build.id });
     const loaded = graph?.transitions.find((t) => t.transition.id === transition.id);
-    expect(loaded?.observations.map((o) => o.verdict).sort()).toEqual(['contradicts', 'supports']);
+    expect(loaded?.observations.map(verdictOf).sort()).toEqual(['contradicts', 'supports']);
     expect(loaded?.observations.map((o) => o.evidence.id)).toContain(contradicting.id);
   });
 

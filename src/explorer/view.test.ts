@@ -6,7 +6,7 @@ import {
   parseRoutePattern,
   type Build,
   type BuildGraph,
-  type Evidence,
+  type StaticEvidence,
   type LoadedScreen,
   type LoadedTransition,
   type Transition,
@@ -26,7 +26,7 @@ const build: Build = {
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
 };
 
-function evidenceAt(file: string, line: number, extractor: string): Evidence {
+function evidenceAt(file: string, line: number, extractor: string): StaticEvidence {
   const identity = {
     kind: 'static',
     buildId: build.id,
@@ -65,6 +65,7 @@ describe('toExplorerGraph', () => {
   it('maps state ids to screen ids and keeps unresolved targets as they are', () => {
     const graph: BuildGraph = {
       build,
+      runs: [],
       screens: [home, about],
       transitions: [
         loadedTransition(home, { kind: 'resolved', stateId: about.states[0].id }, 4),
@@ -101,6 +102,7 @@ describe('toExplorerGraph', () => {
   it('throws when a resolved target is not a state of the build', () => {
     const graph: BuildGraph = {
       build,
+      runs: [],
       screens: [home],
       transitions: [loadedTransition(home, { kind: 'resolved', stateId: about.states[0].id }, 4)],
     };
@@ -110,6 +112,7 @@ describe('toExplorerGraph', () => {
   it('throws when a source state is not a state of the build', () => {
     const graph: BuildGraph = {
       build,
+      runs: [],
       screens: [home],
       transitions: [loadedTransition(about, { kind: 'resolved', stateId: home.states[0].id }, 4)],
     };

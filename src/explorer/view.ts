@@ -53,18 +53,23 @@ export type ExplorerGraph = {
 };
 
 function sourceRefs(observations: readonly EvidenceObservation[]): SourceRef[] {
-  return observations.map(({ evidence }) => {
+  return observations.flatMap(({ evidence }): SourceRef[] => {
     switch (evidence.kind) {
       case 'static':
-        return {
-          evidenceId: evidence.id,
-          file: evidence.span.file,
-          start: evidence.span.start,
-          end: evidence.span.end,
-          extractor: evidence.extractor,
-        };
+        return [
+          {
+            evidenceId: evidence.id,
+            file: evidence.span.file,
+            start: evidence.span.start,
+            end: evidence.span.end,
+            extractor: evidence.extractor,
+          },
+        ];
+      case 'capture':
+      case 'navigation':
+        return [];
       default: {
-        const _exhaustive: never = evidence.kind;
+        const _exhaustive: never = evidence;
         return _exhaustive;
       }
     }

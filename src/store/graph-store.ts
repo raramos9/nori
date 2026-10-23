@@ -17,14 +17,13 @@ import {
   type Build,
   type BuildGraph,
   type BuildId,
-  type Evidence,
-  type EvidenceObservation,
   type LoadedScreen,
   type LoadedTransition,
   type NonEmpty,
   type Observation,
   type ObservationSubject,
   type Screen,
+  type StaticEvidence,
   type StaticIngestion,
   type Transition,
   type TransitionTarget,
@@ -45,6 +44,8 @@ import type {
 } from './schema.js';
 
 const INSERT_CHUNK_SIZE = 200;
+
+type StaticObservation = { readonly evidence: StaticEvidence; readonly verdict: Verdict };
 
 function* chunks<T>(items: readonly T[]): Generator<readonly T[]> {
   for (let i = 0; i < items.length; i += INSERT_CHUNK_SIZE) {
@@ -152,7 +153,7 @@ function transitionToRow(transition: Transition): Selectable<TransitionsTable> {
   }
 }
 
-function parseEvidence(row: Selectable<EvidenceTable>): Evidence {
+function parseStaticEvidence(row: Selectable<EvidenceTable>): StaticEvidence {
   const where = (column: string) => `Evidence ${row.id}: ${column} (kind '${row.kind}')`;
   switch (row.kind) {
     case 'static':
@@ -178,7 +179,7 @@ function parseEvidence(row: Selectable<EvidenceTable>): Evidence {
   }
 }
 
-function evidenceToRow(evidence: Evidence): Selectable<EvidenceTable> {
+function evidenceToRow(evidence: StaticEvidence): Selectable<EvidenceTable> {
   switch (evidence.kind) {
     case 'static':
       return {
@@ -289,9 +290,9 @@ function subjectKey(subject: ObservationSubject): string {
 }
 
 function observationsFor(
-  groups: ReadonlyMap<string, NonEmpty<EvidenceObservation>>,
+  groups: ReadonlyMap<string, NonEmpty<StaticObservation>>,
   subject: ObservationSubject,
-): NonEmpty<EvidenceObservation> {
+): NonEmpty<StaticObservation> {
   const found = groups.get(subjectKey(subject));
   if (found === undefined) {
     throw new Error(`${subjectKey(subject)} is supported in the build but has no observations loaded`);
@@ -396,10 +397,10 @@ export class GraphStore {
         .orderBy('evidence.id')
         .execute();
 
-      const groups = new Map<string, [EvidenceObservation, ...EvidenceObservation[]]>();
+      const groups = new Map<string, [StaticObservation, ...StaticObservation[]]>();
       for (const row of observationRows) {
         appendTo(groups, subjectKey(parseSubject(row.subject_kind, row.subject_id)), {
-          evidence: parseEvidence(row),
+          evidence: parseStaticEvidence(row),
           verdict: parseVerdict(row.verdict),
         });
       }
@@ -440,7 +441,7 @@ export class GraphStore {
         return { transition, observations, status: deriveEvidenceStatus(observations) };
       });
 
-      return { build: parseBuild(buildRow), screens, transitions: loadedTransitions };
+      return { build: parseBuild(buildRow), runs: [], screens, transitions: loadedTransitions };
     });
   }
 

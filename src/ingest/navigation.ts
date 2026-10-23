@@ -4,7 +4,7 @@ import {
   DEFAULT_STATE_KEY,
   type Application,
   type Build,
-  type Evidence,
+  type StaticEvidence,
   type Observation,
   type RoutePattern,
   type StateId,
@@ -31,7 +31,7 @@ export type CallOutcome = {
 
 export type NavigationIngestion = {
   readonly transitions: readonly Transition[];
-  readonly evidence: readonly Evidence[];
+  readonly evidence: readonly StaticEvidence[];
   readonly observations: readonly Observation[];
   readonly outcomes: readonly CallOutcome[];
 };
@@ -184,7 +184,7 @@ export function navigationIngestion({
 
   const landings = landingsOf(forwardingOf(redirectOnly, sourced));
   const transitions = new Map<TransitionId, Transition>();
-  const evidence: Evidence[] = [];
+  const evidence: StaticEvidence[] = [];
   const observations: Observation[] = [];
   for (const { call, contexts } of sourced) {
     const backed = new Set<TransitionId>();
@@ -205,7 +205,7 @@ export function navigationIngestion({
     if (backed.size === 0) continue;
 
     const identity = { kind: 'static', buildId: build.id, span: call.span, extractor: NAV_EXTRACTOR } as const;
-    const callEvidence: Evidence = { ...identity, id: evidenceId(identity) };
+    const callEvidence: StaticEvidence = { ...identity, id: evidenceId(identity) };
     evidence.push(callEvidence);
     for (const id of backed) {
       observations.push({ evidenceId: callEvidence.id, subject: { kind: 'transition', id }, verdict: 'supports' });
