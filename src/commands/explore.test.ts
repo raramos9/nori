@@ -7,7 +7,7 @@ import { applicationId, buildId, evidenceId, screenId } from '../graph/ids.js';
 import { parseCommitSha, parseRoutePattern, type Build, type StaticIngestion } from '../graph/model.js';
 import { GraphStore } from '../store/graph-store.js';
 import { exploreGraph } from './explore.js';
-import { stateDatabasePath } from './scan.js';
+import { stateDatabasePath } from '../runtime/layout.js';
 
 const tempDirs: string[] = [];
 
