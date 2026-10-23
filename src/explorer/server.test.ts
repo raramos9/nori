@@ -72,9 +72,11 @@ async function fixture(): Promise<Fixture> {
           ref(EVIDENCE.dotdot, '../../../../etc/hosts', 1),
           ref(EVIDENCE.missing, 'gone.tsx', 1),
         ],
+        captures: [],
       },
     ],
     transitions: [],
+    runs: [],
   } satisfies ExplorerGraph;
 
   const server = await startExplorerServer({ graph, uiDir });

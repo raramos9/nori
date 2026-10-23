@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { applicationId, buildId, evidenceId, screenId, stateId, transitionId } from '../graph/ids.js';
+import { applicationId, buildId, evidenceId, runId, screenId, stateId, transitionId } from '../graph/ids.js';
 import {
   DEFAULT_STATE_KEY,
+  parseArtifactPath,
   parseCommitSha,
+  parseOrigin,
+  parsePageUrl,
   parseRoutePattern,
   type Build,
+  type CaptureEvidence,
+  type NavigationEvidence,
+  type Run,
   type BuildGraph,
   type StaticEvidence,
   type LoadedScreen,
@@ -117,5 +123,132 @@ describe('toExplorerGraph', () => {
       transitions: [loadedTransition(about, { kind: 'resolved', stateId: home.states[0].id }, 4)],
     };
     expect(() => toExplorerGraph({ root: rootPath, graph })).toThrow(/source state .* is not a state/);
+  });
+
+  describe('runtime evidence', () => {
+    const origin = parseOrigin('http://localhost:3000');
+    const session = { kind: 'storage-state', label: 'signed-in' } as const;
+    const startedAt = new Date('2026-01-02T00:00:00.000Z');
+    const run: Run = {
+      id: runId({ buildId: build.id, origin, session, startedAt }),
+      applicationId: applicationIdValue,
+      buildId: build.id,
+      origin,
+      session,
+      startedAt,
+      finishedAt: new Date('2026-01-02T00:01:00.000Z'),
+      stop: 'frontier-exhausted',
+      crawlerVersion: '1',
+      reconcilerVersion: '1',
+      requests: { allowed: 7, blocked: 1 },
+    };
+
+    function captureOf(path: string): CaptureEvidence {
+      const identity = { kind: 'capture', buildId: build.id, runId: run.id, url: parsePageUrl(origin, path) } as const;
+      return {
+        ...identity,
+        id: evidenceId(identity),
+        httpStatus: 200,
+        screenshot: parseArtifactPath(`/runs/${path.slice(1) || 'home'}.png`),
+        dom: parseArtifactPath(`/runs/${path.slice(1) || 'home'}.html`),
+      };
+    }
+
+    it('projects captures, walks, runs and the runtime-only siblings it may explain', () => {
+      const homeCapture = captureOf('/');
+      const aboutCapture = captureOf('/about');
+      const requested = parsePageUrl(origin, '/about');
+      const navIdentity = { kind: 'navigation', buildId: build.id, runId: run.id, start: { kind: 'entry' }, requested } as const;
+      const navigation: NavigationEvidence = {
+        ...navIdentity,
+        id: evidenceId(navIdentity),
+        redirects: [],
+        landing: { evidenceId: aboutCapture.id, url: aboutCapture.url, httpStatus: 200, screenshot: aboutCapture.screenshot, dom: aboutCapture.dom },
+        logSeq: 0,
+      };
+      const skipped = [{ url: parsePageUrl(origin, '/hop'), why: 'pass-through' }] as const;
+
+      const observedHome: LoadedScreen = {
+        ...home,
+        observations: [
+          ...home.observations,
+          { evidence: homeCapture, match: { verdict: 'supports', rule: 'rendered', url: homeCapture.url, pattern: home.screen.routePattern } },
+        ],
+        status: 'observed',
+      };
+      const staticSibling = loadedTransition(home, { kind: 'unresolved', reason: 'dynamic-expression', expression: 'x' }, 7);
+      const runtimeOnly: LoadedTransition = {
+        ...loadedTransition(home, { kind: 'resolved', stateId: about.states[0].id }, 4),
+        observations: [
+          {
+            evidence: navigation,
+            match: {
+              verdict: 'supports',
+              rule: 'action-runtime-only',
+              sourceUrl: homeCapture.url,
+              sourcePattern: home.screen.routePattern,
+              targetUrl: aboutCapture.url,
+              targetPattern: about.screen.routePattern,
+              skipped,
+              triggerCandidates: ['link'],
+            },
+          },
+        ],
+        status: 'observed',
+      };
+
+      const view = toExplorerGraph({
+        root: rootPath,
+        graph: { build, runs: [run], screens: [observedHome, about], transitions: [staticSibling, runtimeOnly] },
+      });
+
+      expect(view.runs).toEqual([
+        {
+          id: run.id,
+          session: 'signed-in',
+          origin: 'http://localhost:3000',
+          startedAt: '2026-01-02T00:00:00.000Z',
+          finishedAt: '2026-01-02T00:01:00.000Z',
+          stop: 'frontier-exhausted',
+          requests: { allowed: 7, blocked: 1 },
+        },
+      ]);
+      expect(view.screens[0]?.captures).toEqual([
+        {
+          evidenceId: homeCapture.id,
+          runId: run.id,
+          session: 'signed-in',
+          url: homeCapture.url,
+          httpStatus: 200,
+          verdict: 'supports',
+          screenshotPath: '/runs/home.png',
+          domPath: '/runs/home.html',
+        },
+      ]);
+      expect(view.screens[0]?.sources).toHaveLength(1);
+      expect(view.screens[1]?.captures).toEqual([]);
+
+      const [explained, walked] = view.transitions;
+      expect(explained).toMatchObject({ runtimeOnly: false, walks: [], observedIn: [], mayExplain: [] });
+      expect(walked).toMatchObject({
+        runtimeOnly: true,
+        observedIn: ['signed-in'],
+        mayExplain: [staticSibling.transition.id],
+        sources: [],
+      });
+      expect(walked?.walks).toEqual([
+        {
+          evidenceId: navigation.id,
+          runId: run.id,
+          session: 'signed-in',
+          rule: 'action-runtime-only',
+          hop: null,
+          requested,
+          redirects: [],
+          skipped,
+          landing: { evidenceId: aboutCapture.id, url: aboutCapture.url, screenshotPath: '/runs/about.png' },
+        },
+      ]);
+    });
   });
 });
