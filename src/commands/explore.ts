@@ -20,8 +20,7 @@ function parsePort(value: string | undefined): number {
   return port;
 }
 
-// Never read a stored build back: a scanned repo can ship a forged .nori/graph.db, so the served
-// graph is always the one this analysis just produced.
+// Never read a stored build back: the served graph is always the analysis this call just ran.
 export async function exploreGraph({ path }: { path: string }): Promise<{ root: string; graph: BuildGraph }> {
   const root = await resolveRoot(path);
   return { root, graph: await scan({ path: root }) };

@@ -4,11 +4,9 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,7 +14,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { NoriError } from '../errors.js';
-import { formatScan, scan } from './scan.js';
+import { applicationId } from '../graph/ids.js';
+import { formatScan, scan, stateDatabasePath } from './scan.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const tempDirs: string[] = [];
@@ -71,7 +70,7 @@ function nextFixture(): string {
 const TABLES = ['applications', 'builds', 'screens', 'ui_states', 'transitions', 'evidence', 'observations'] as const;
 
 function countRows(root: string): Record<string, number> {
-  const sqlite = new Database(join(root, '.nori', 'graph.db'), { readonly: true });
+  const sqlite = new Database(stateDatabasePath(applicationId({ rootPath: root })), { readonly: true });
   try {
     return Object.fromEntries(
       TABLES.map((table) => {
@@ -133,11 +132,22 @@ describe('scan', () => {
     }
   });
 
-  it('keeps the database out of git status', async () => {
+  it('keeps its database under NORI_HOME and leaves the repo untouched', async () => {
     const root = nextFixture();
-    await scan({ path: root });
-    expect(readFileSync(join(root, '.nori', '.gitignore'), 'utf8')).toBe('*\n');
+    const graph = await scan({ path: root });
+    expect(existsSync(join(root, '.nori'))).toBe(false);
     expect(git(root, 'status', '--porcelain')).toBe('');
+    expect(existsSync(join(process.env.NORI_HOME!, 'apps', graph.build.applicationId, 'graph.db'))).toBe(true);
+  });
+
+  it('neither reads nor touches a database committed in the repo', async () => {
+    const root = nextFixture();
+    const committed = join(root, '.nori', 'graph.db');
+    mkdirSync(dirname(committed));
+    writeFileSync(committed, 'not a database');
+    const graph = await scan({ path: root });
+    expect(graph.screens.length).toBeGreaterThan(0);
+    expect(readFileSync(committed, 'utf8')).toBe('not a database');
   });
 
   it('gives an uncommitted edit a new build with the same screen ids', async () => {
@@ -193,7 +203,7 @@ describe('scan', () => {
     git(repo, 'commit', '-q', '-m', 'fixture');
     const graph = await scan({ path: web });
     expect(graph.screens.map(({ screen }) => screen.routePattern)).toEqual(['/']);
-    expect(existsSync(join(web, '.nori', 'graph.db'))).toBe(true);
+    expect(existsSync(stateDatabasePath(applicationId({ rootPath: web })))).toBe(true);
   });
 
   it('accepts next declared in a workspace root manifest', async () => {
@@ -251,30 +261,6 @@ describe('scan navigation', () => {
       start: { line: 2, column: 25 },
       end: { line: 2, column: 36 },
     });
-  });
-});
-
-describe('scan state directory', () => {
-  it('refuses a .nori symlink instead of writing through it', async () => {
-    const root = nextFixture();
-    const elsewhere = tempDir();
-    symlinkSync(elsewhere, join(root, '.nori'));
-
-    await expect(scan({ path: root })).rejects.toThrow(NoriError);
-    expect(readdirSync(elsewhere)).toEqual([]);
-  });
-
-  it('refuses symlinked files inside .nori', async () => {
-    for (const name of ['.gitignore', 'graph.db', 'graph.db-journal', 'graph.db-wal']) {
-      const root = nextFixture();
-      const target = join(tempDir(), 'victim');
-      writeFileSync(target, 'keep me');
-      mkdirSync(join(root, '.nori'));
-      symlinkSync(target, join(root, '.nori', name));
-
-      await expect(scan({ path: root })).rejects.toThrow(NoriError);
-      expect(readFileSync(target, 'utf8')).toBe('keep me');
-    }
   });
 });
 

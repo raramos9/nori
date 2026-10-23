@@ -53,7 +53,7 @@ To try it without your own app, point any command at `fixtures/demo`, a small ap
 - Roughly a third of internal navigation stays unresolved. Common causes are a target computed at runtime, such as `router.push(next)`, or a link built from data. Each unresolved call keeps its source expression, so you can see why.
 - On six open-source apps that were held out from tuning, 61.6% of internal navigation calls resolve to a screen. `bench/` has the benchmark and how to rerun it.
 - A link inside a shared layout or component counts as navigation from every screen that renders it.
-- nori writes its database to `.nori/graph.db` inside the analysed project. The directory ignores itself in git.
+- nori keeps its database under `~/.nori/apps/<app id>/graph.db` (override with `NORI_HOME`) and writes nothing into the analysed project.
 
 ## Develop
 

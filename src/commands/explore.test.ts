@@ -7,6 +7,7 @@ import { applicationId, buildId, evidenceId, screenId } from '../graph/ids.js';
 import { parseCommitSha, parseRoutePattern, type Build, type StaticIngestion } from '../graph/model.js';
 import { GraphStore } from '../store/graph-store.js';
 import { exploreGraph } from './explore.js';
+import { stateDatabasePath } from './scan.js';
 
 const tempDirs: string[] = [];
 
@@ -63,8 +64,9 @@ async function forgeDatabase(root: string): Promise<void> {
     evidence: [evidence],
     observations: [{ evidenceId: evidence.id, subject: { kind: 'screen', id: screen.id }, verdict: 'supports' }],
   };
-  mkdirSync(join(root, '.nori'), { recursive: true });
-  const store = await GraphStore.open({ path: join(root, '.nori', 'graph.db') });
+  const path = stateDatabasePath(application.id);
+  mkdirSync(dirname(path), { recursive: true });
+  const store = await GraphStore.open({ path });
   try {
     await store.ingestStatic(ingestion);
   } finally {

@@ -1,9 +1,9 @@
-import { lstat, mkdir, readdir, writeFile } from 'node:fs/promises';
-import { NoriError } from '../errors.js';
-import { join } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { applicationId, buildId } from '../graph/ids.js';
-import type { Application, Build, BuildGraph, StaticIngestion } from '../graph/model.js';
+import type { Application, ApplicationId, Build, BuildGraph, StaticIngestion } from '../graph/model.js';
 import { sourceHash } from '../graph/source-hash.js';
 import { navigationIngestion, type CallOutcome } from '../ingest/navigation.js';
 import { screensIngestion } from '../ingest/screens.js';
@@ -13,31 +13,11 @@ import { GraphStore } from '../store/graph-store.js';
 import { analyzerVersion as currentAnalyzerVersion } from '../version.js';
 import type { Command } from './command.js';
 
-const STATE_DIR = '.nori';
 const DATABASE_FILE = 'graph.db';
 
-async function isDirectory(path: string): Promise<boolean | null> {
-  try {
-    return (await lstat(path)).isDirectory();
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
-    throw error;
-  }
-}
-
-// The scanned repo is untrusted, so a committed symlink anywhere in .nori (including SQLite's
-// journal and WAL side files) must not redirect our writes.
-async function prepareStateDir(stateDir: string): Promise<void> {
-  const directory = await isDirectory(stateDir);
-  if (directory === null) await mkdir(stateDir);
-  else if (!directory) throw new NoriError(`${stateDir} exists and is not a directory`);
-
-  for (const entry of await readdir(stateDir, { withFileTypes: true })) {
-    if (!entry.isFile()) {
-      throw new NoriError(`${join(stateDir, entry.name)} is not a regular file; remove it and rescan`);
-    }
-  }
-  await writeFile(join(stateDir, '.gitignore'), '*\n');
+export function stateDatabasePath(applicationId: ApplicationId): string {
+  const home = process.env.NORI_HOME;
+  return join(home !== undefined && home !== '' ? home : join(homedir(), '.nori'), 'apps', applicationId, DATABASE_FILE);
 }
 
 export type Analysis = {
@@ -103,10 +83,10 @@ export async function analyze({
   };
 }
 
-async function openStateStore({ root }: { root: string }): Promise<GraphStore> {
-  const stateDir = join(root, STATE_DIR);
-  await prepareStateDir(stateDir);
-  return GraphStore.open({ path: join(stateDir, DATABASE_FILE) });
+async function openStateStore({ applicationId }: { applicationId: ApplicationId }): Promise<GraphStore> {
+  const path = stateDatabasePath(applicationId);
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  return GraphStore.open({ path });
 }
 
 export async function scan({
@@ -116,8 +96,8 @@ export async function scan({
   path: string;
   createdAt?: Date;
 }): Promise<BuildGraph> {
-  const { root, ingestion } = await analyze({ path, createdAt });
-  const store = await openStateStore({ root });
+  const { ingestion } = await analyze({ path, createdAt });
+  const store = await openStateStore({ applicationId: ingestion.application.id });
   try {
     await store.ingestStatic(ingestion);
     const graph = await store.loadBuildGraph({ buildId: ingestion.build.id });
