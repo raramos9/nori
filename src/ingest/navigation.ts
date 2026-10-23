@@ -34,6 +34,8 @@ export type NavigationIngestion = {
   readonly evidence: readonly StaticEvidence[];
   readonly observations: readonly Observation[];
   readonly outcomes: readonly CallOutcome[];
+  readonly matcher: Matcher;
+  readonly redirectOnly: ReadonlySet<RoutePattern>;
 };
 
 const REASON_PRIORITY: readonly UnresolvedReason[] = ['dynamic-expression', 'no-matching-route', 'ambiguous-route'];
@@ -212,5 +214,5 @@ export function navigationIngestion({
     }
   }
 
-  return { transitions: [...transitions.values()], evidence, observations, outcomes };
+  return { transitions: [...transitions.values()], evidence, observations, outcomes, matcher, redirectOnly };
 }
