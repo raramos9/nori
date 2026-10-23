@@ -1,6 +1,10 @@
+import { readdirSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { parseOrigin, parsePageUrl } from '../graph/model.js';
 import type { PathTemplate } from './evaluate.js';
-import { createMatcher, resolveTemplate, type Matcher, type MatchRoute } from './match.js';
+import { createMatcher, resolveTemplate, resolveUrl, type Matcher, type MatchRoute } from './match.js';
 import { discoverRoutes } from './routes.js';
 
 function template(path: string): PathTemplate {
@@ -203,5 +207,64 @@ describe('relative links', () => {
 
   it('is a dynamic expression without a source screen', () => {
     expect(resolve(nested, './child')).toEqual({ kind: 'unresolved', reason: 'dynamic-expression' });
+  });
+});
+
+describe('resolveUrl', () => {
+  const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures');
+  const origin = parseOrigin('http://localhost:3000');
+
+  function fixtureMatcher(name: string): Matcher {
+    const root = join(FIXTURES, name);
+    const files = readdirSync(root, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && !entry.parentPath.includes('node_modules'))
+      .map((entry) => relative(root, join(entry.parentPath, entry.name)));
+    return matcherFor(files);
+  }
+
+  const notAScreen = (why: string) => ({ kind: 'not-a-screen', why });
+
+  const CASES: Record<'demo' | 'adapters', readonly (readonly [string, unknown])[]> = {
+    demo: [
+      ['/', screen('/')],
+      ['/home', screen('/home')],
+      ['/projects/42', screen('/projects/[id]')],
+      ['/projects/new', screen('/projects/new')],
+      ['/docs/getting-started/quickstart', screen('/docs/[...slug]')],
+      ['/settings/billing?tab=card#top', screen('/settings/billing')],
+      ['/api/export', notAScreen('handler')],
+      ['/pricing-sheet.pdf', notAScreen('asset')],
+      ['/nope', notAScreen('no-matching-route')],
+      ['//nope', notAScreen('no-matching-route')],
+    ],
+    adapters: [
+      ['/', screen('/[lang]')],
+      ['/about', screen('/[lang]/about')],
+      ['/en/about', screen('/[lang]/about')],
+      ['/fr/blog/hello', screen('/[lang]/blog/[slug]')],
+      ['/projects/7', screen('/app.acme.dev/projects/[id]')],
+      ['/users', screen('/admin.acme.dev/users')],
+      ['/settings', notAScreen('ambiguous-route')],
+      ['/api/activity', notAScreen('handler')],
+      ['/admin.acme.dev/users', notAScreen('no-matching-route')],
+    ],
+  };
+
+  describe.each(['demo', 'adapters'] as const)('on the %s fixture', (name) => {
+    const cases = CASES[name];
+    const matcher = fixtureMatcher(name);
+
+    it.each(cases.map(([path, expected]) => ({ path, expected })))('$path', ({ path, expected }) => {
+      expect(resolveUrl({ matcher, url: parsePageUrl(origin, `http://localhost:3000${path}`) })).toEqual(expected);
+    });
+
+    it('agrees with a literal href written on no page', () => {
+      for (const [path] of cases) {
+        const fromUrl = resolveUrl({ matcher, url: parsePageUrl(origin, `http://localhost:3000${path}`) });
+        const literal = resolve(matcher, path.replace(/[?#].*$/, ''));
+        if (literal.kind === 'screen') expect(fromUrl, path).toEqual(literal);
+        else expect(fromUrl.kind, path).toBe('not-a-screen');
+      }
+    });
   });
 });
