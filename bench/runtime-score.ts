@@ -21,6 +21,7 @@ export type RuntimeScore = {
   readonly truth: number;
   readonly hits: number;
   readonly extras: readonly string[];
+  readonly missing: readonly string[];
   readonly observedScreens: number;
 };
 
@@ -46,15 +47,17 @@ export function score(graph: ScorableGraph, expected: Expected): RuntimeScore {
     truth: truth.size,
     hits: observed.size - extras.length,
     extras,
+    missing: [...truth].filter((key) => !observed.has(key)).sort(),
     observedScreens: graph.screens.filter(({ status }) => status === 'observed').length,
   };
 }
 
-export function formatScore({ observed, truth, hits, extras, observedScreens }: RuntimeScore): string {
+export function formatScore({ observed, truth, hits, extras, missing, observedScreens }: RuntimeScore): string {
   const precision = observed === 0 ? '-' : `${((100 * hits) / observed).toFixed(1)}%`;
   return [
     `observed ${observed} of ${truth} edges, ${hits} in expected.json (precision ${precision})`,
     `observed screens ${observedScreens}`,
     ...extras.map((key) => `extra ${key}`),
+    ...missing.map((key) => `missing ${key}`),
   ].join('\n');
 }
