@@ -6,6 +6,8 @@ A small Next.js App Router app ("Tasks", a project tracker) with a marketing sit
 nori explore fixtures/demo
 ```
 
+To run the app itself, `npm install` then `npm run dev` in this directory. `POST /api/session` signs in by setting the `uid` and `name` cookies, and `DELETE` signs out.
+
 `expected.json` lists every screen and every navigation a user can follow at runtime, written from the app's behavior before nori ran on it. `missed` is the subset static analysis can't resolve, each with a reason. `open` lists screens with a call whose targets can't be named at all, such as a redirect to a query parameter. `src/fixtures.test.ts` checks nori against it.
 
 | Measure | Value |
