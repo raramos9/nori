@@ -24,7 +24,10 @@ const SETTLE_CAP_MS = 5_000;
 const QUIET_WINDOW_MS = 500;
 const POLL_MS = 100;
 
-export type RequestDecision = 'allowed' | 'blocked';
+export type RequestDecision = 'allowed' | 'blocked' | 'internal';
+
+// The browser's own resources (its PDF viewer, data and blob URLs) never reach the network.
+const INTERNAL_SCHEMES = new Set(['chrome:', 'chrome-extension:', 'data:', 'blob:']);
 
 function originOf(url: string): string | null {
   try {
@@ -34,8 +37,37 @@ function originOf(url: string): string | null {
   }
 }
 
+export function redirectLocation(status: number, location: string | undefined, base: string): string | null {
+  if (status < 300 || status >= 400 || location === undefined) return null;
+  try {
+    return new URL(location, base).href;
+  } catch {
+    return location;
+  }
+}
+
+// ws://host is the http://host origin for this policy; the dev server's HMR socket lives there.
+export function sameOrigin(origin: Origin, socketUrl: string): boolean {
+  try {
+    const url = new URL(socketUrl);
+    const scheme = { 'ws:': 'http:', 'wss:': 'https:' }[url.protocol];
+    return scheme !== undefined && `${scheme}//${url.host}` === origin;
+  } catch {
+    return false;
+  }
+}
+
+function schemeOf(url: string): string {
+  try {
+    return new URL(url).protocol;
+  } catch {
+    return '';
+  }
+}
+
 // The whole isolation policy: the run's own origin, read-only methods, nothing else.
 export function decideRequest(origin: Origin, method: string, url: string): RequestDecision {
+  if (INTERNAL_SCHEMES.has(schemeOf(url))) return 'internal';
   const verb = method.toUpperCase();
   if (verb !== 'GET' && verb !== 'HEAD') return 'blocked';
   return originOf(url) === origin ? 'allowed' : 'blocked';
@@ -120,6 +152,14 @@ export class RunRecorder {
     this.byRequest.set(request, entry);
   }
 
+  logBlockedRedirect(method: string, url: string): void {
+    this.network.push({ method, url, decision: 'blocked' });
+  }
+
+  logWebSocket(url: string, decision: RequestDecision): void {
+    this.network.push({ method: 'WEBSOCKET', url, decision });
+  }
+
   logStatus(request: Request, status: number): void {
     const entry = this.byRequest.get(request);
     if (entry !== undefined) entry.status = status;
@@ -130,8 +170,8 @@ export class RunRecorder {
   }
 
   counts(): { allowed: number; blocked: number } {
-    const blocked = this.network.filter((entry) => entry.decision === 'blocked').length;
-    return { allowed: this.network.length - blocked, blocked };
+    const count = (decision: RequestDecision) => this.network.filter((entry) => entry.decision === decision).length;
+    return { allowed: count('allowed'), blocked: count('blocked') };
   }
 
   allCaptures(): readonly CrawledCapture[] {
@@ -183,8 +223,23 @@ export async function openContext(
     const request = route.request();
     const decision = decideRequest(args.origin, request.method(), request.url());
     args.recorder.logRequest(request, decision);
-    if (decision === 'blocked') await route.abort('blockedbyclient');
-    else await route.continue();
+    if (decision === 'blocked') return route.abort('blockedbyclient');
+    if (decision === 'internal') return route.continue();
+    // The browser follows a redirect without asking this handler again, so the hop is fetched here
+    // and its Location must pass the policy before the browser sees it.
+    const response = await route.fetch({ maxRedirects: 0 });
+    const location = redirectLocation(response.status(), response.headers()['location'], request.url());
+    if (location !== null && decideRequest(args.origin, request.method(), location) !== 'allowed') {
+      args.recorder.logBlockedRedirect(request.method(), location);
+      return route.abort('blockedbyclient');
+    }
+    return route.fulfill({ response });
+  });
+  await context.routeWebSocket(/.*/, (socket) => {
+    const allowed = sameOrigin(args.origin, socket.url());
+    args.recorder.logWebSocket(socket.url(), allowed ? 'allowed' : 'blocked');
+    if (allowed) socket.connectToServer();
+    else void socket.close({ code: 1008, reason: 'blocked by nori' });
   });
   context.on('response', (response) => args.recorder.logStatus(response.request(), response.status()));
   return context;

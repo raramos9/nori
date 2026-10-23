@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseOrigin, parsePageUrl } from '../graph/model.js';
-import { buildRedirects, decideRequest, followLinks } from './crawl.js';
+import { buildRedirects, decideRequest, followLinks, redirectLocation, sameOrigin } from './crawl.js';
 
 const origin = parseOrigin('http://127.0.0.1:3000');
 const page = (path: string) => parsePageUrl(origin, path);
@@ -18,7 +18,11 @@ describe('decideRequest', () => {
     ['GET', 'http://localhost:3000/a', 'blocked'],
     ['GET', 'https://127.0.0.1:3000/a', 'blocked'],
     ['GET', 'http://127.0.0.1:3000@evil.test/a', 'blocked'],
-    ['GET', 'data:text/plain,hi', 'blocked'],
+    ['GET', 'data:text/plain,hi', 'internal'],
+    ['GET', 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/main.js', 'internal'],
+    ['GET', 'chrome://resources/css/text_defaults_md.css', 'internal'],
+    ['POST', 'blob:http://127.0.0.1:3000/abc', 'internal'],
+    ['GET', 'ftp://127.0.0.1:3000/a', 'blocked'],
     ['GET', 'not a url', 'blocked'],
   ])('%s %s is %s', (method, url, expected) => {
     expect(decideRequest(origin, method, url)).toBe(expected);
@@ -95,5 +99,28 @@ describe('buildRedirects', () => {
     const redirects = buildRedirects({ origin, requested: page('/a'), httpUrls: [abs('/a')], navigatedUrls: [abs('/a#top'), abs('/b#x')], landing: page('/b') });
     expect([page('/a'), ...redirects.map((r) => r.to)].at(-1)).toBe(page('/b'));
     expect(redirects).toEqual([{ to: page('/b'), via: 'client' }]);
+  });
+});
+
+describe('redirectLocation', () => {
+  it.each([
+    [302, '/login', 'http://127.0.0.1:3000/dashboard', 'http://127.0.0.1:3000/login'],
+    [307, 'https://example.com/x', 'http://127.0.0.1:3000/a', 'https://example.com/x'],
+    [200, '/login', 'http://127.0.0.1:3000/a', null],
+    [302, undefined, 'http://127.0.0.1:3000/a', null],
+  ] as const)('%i %s from %s is %s', (status, location, base, expected) => {
+    expect(redirectLocation(status, location, base)).toBe(expected);
+  });
+});
+
+describe('sameOrigin for sockets', () => {
+  it.each([
+    ['ws://127.0.0.1:3000/_next/webpack-hmr', true],
+    ['wss://127.0.0.1:3000/x', false],
+    ['ws://127.0.0.1:4802/x', false],
+    ['ws://evil.test/x', false],
+    ['not a url', false],
+  ] as const)('%s is %s', (url, expected) => {
+    expect(sameOrigin(origin, url)).toBe(expected);
   });
 });
