@@ -64,3 +64,13 @@ An edge is one source screen, one call site and one target screen, so a link in 
 | `both-branches` | 3 | Hard |
 | `import-over-attribution` | 1 | Yes |
 | `item-branch`: a literal list feeds two branches and every item is credited to both | 1 | Yes |
+
+## Runtime harness
+
+`runtime.ts` scores nori's runtime evidence on `fixtures/demo` against `expected.json`. It copies the fixture to `~/.cache/nori/runtime/demo`, installs it once (reinstalling only when `package.json` changes), boots `next dev` on a free port, scans the copy, and prints how many of the 79 true edges are `observed`. Observed edges outside `expected.json` are listed as extras. The state database goes to a temp `NORI_HOME` unless one is set.
+
+```
+pnpm exec tsx bench/runtime.ts [--cache <dir>] [--keep-alive]
+```
+
+`--keep-alive` prints the server URL and waits for Ctrl-C. The server's whole process group is killed on exit. `nori verify` is not wired in yet, so the baseline is 0 observed. The scoring in `runtime-score.ts` is pure and tested by `runtime.test.ts`.
