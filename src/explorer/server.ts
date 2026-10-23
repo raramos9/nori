@@ -19,6 +19,57 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   '.map': 'application/json; charset=utf-8',
 };
 
+type Artifacts = { readonly screenshotPath: string; readonly domPath: string | null };
+
+function artifactIndex(graph: ExplorerGraph): ReadonlyMap<string, Artifacts> {
+  const index = new Map<string, Artifacts>();
+  for (const { captures } of graph.screens) {
+    for (const capture of captures) {
+      index.set(capture.evidenceId, { screenshotPath: capture.screenshotPath, domPath: capture.domPath });
+    }
+  }
+  for (const { walks } of graph.transitions) {
+    for (const { landing } of walks) {
+      if (!index.has(landing.evidenceId)) index.set(landing.evidenceId, { screenshotPath: landing.screenshotPath, domPath: null });
+    }
+  }
+  return index;
+}
+
+async function serveArtifact({
+  artifacts,
+  evidenceId,
+  kind,
+  response,
+  head,
+}: {
+  artifacts: ReadonlyMap<string, Artifacts>;
+  evidenceId: string;
+  kind: string;
+  response: ServerResponse;
+  head: boolean;
+}): Promise<void> {
+  const entry = artifacts.get(evidenceId);
+  const path = kind === 'screenshot' ? entry?.screenshotPath : kind === 'dom' ? entry?.domPath : undefined;
+  if (path === undefined || path === null) return sendError(response, 404, 'no such artifact');
+  const body = await readFile(path).catch((error: unknown) => {
+    const code = errorCode(error);
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    throw error;
+  });
+  if (body === null) return sendError(response, 404, 'no such artifact');
+
+  // The DOM is the crawled app's own HTML. As text/html it would run that app's scripts on this origin,
+  // next to /api/source.
+  response.writeHead(200, {
+    'content-type': kind === 'screenshot' ? 'image/png' : 'text/plain; charset=utf-8',
+    'x-content-type-options': 'nosniff',
+    'content-security-policy': 'sandbox',
+    'cache-control': 'no-cache',
+  });
+  response.end(head ? undefined : body);
+}
+
 export type ExplorerServer = {
   readonly url: string;
   readonly close: () => Promise<void>;
@@ -86,6 +137,7 @@ export async function startExplorerServer({
 }): Promise<ExplorerServer> {
   const realRoot = await realpath(graph.root);
   const sources = sourceIndex(graph);
+  const artifacts = artifactIndex(graph);
   const ui = resolve(uiDir);
   let allowedHosts: ReadonlySet<string> = new Set();
 
@@ -108,9 +160,20 @@ export async function startExplorerServer({
         if (snippet === null) return sendError(response, 404, 'no such source');
         return sendJson(response, 200, snippet);
       }
-      default:
+      default: {
+        const artifact = /^\/artifacts\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+        if (artifact !== null) {
+          return serveArtifact({
+            artifacts,
+            evidenceId: artifact[1] ?? '',
+            kind: artifact[2] ?? '',
+            response,
+            head: request.method === 'HEAD',
+          });
+        }
         if (url.pathname.startsWith('/api/')) return sendError(response, 404, 'not found');
         return serveStatic({ uiDir: ui, pathname: url.pathname, response, head: request.method === 'HEAD' });
+      }
     }
   }
 
