@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import { scan } from '../src/commands/scan.js';
+import { formatVerify, verify, DEFAULT_BUDGETS } from '../src/commands/verify.js';
 import { formatScore, score } from './runtime-score.js';
 
 const run = promisify(execFile);
@@ -21,6 +22,8 @@ const USAGE = 'usage: pnpm exec tsx bench/runtime.ts [--cache <dir>] [--keep-ali
 
 const expectedSchema = z.object({ edges: z.array(z.object({ from: z.string(), to: z.string() })) });
 
+const SNAPSHOT_IGNORE = ['.next/', 'node_modules/', 'next-env.d.ts', 'package-lock.json', INSTALL_HASH_FILE, ''].join('\n');
+
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
 export async function prepare({ cacheDir }: { cacheDir: string }): Promise<string> {
@@ -30,12 +33,13 @@ export async function prepare({ cacheDir }: { cacheDir: string }): Promise<strin
     recursive: true,
     filter: (source) => !/(^|\/)(\.nori|node_modules)$/.test(source),
   });
-  if (!existsSync(join(dir, '.git'))) {
-    const git = (...args: string[]) => run('git', ['-c', 'user.name=nori', '-c', 'user.email=nori@localhost', ...args], { cwd: dir });
-    await git('init', '-q');
-    await git('add', '-A');
-    await git('commit', '-q', '-m', 'fixture snapshot');
-  }
+  const git = (...args: string[]) => run('git', ['-c', 'user.name=nori', '-c', 'user.email=nori@localhost', ...args], { cwd: dir });
+  if (!existsSync(join(dir, '.git'))) await git('init', '-q');
+  await writeFile(join(dir, '.gitignore'), SNAPSHOT_IGNORE);
+  await git('rm', '-r', '-q', '--cached', '--ignore-unmatch', '.next', 'next-env.d.ts', 'package-lock.json', INSTALL_HASH_FILE);
+  await git('add', '-A');
+  const clean = await git('diff', '--cached', '--quiet').then(() => true, () => false);
+  if (!clean) await git('commit', '-q', '-m', 'fixture snapshot');
   const hash = sha256(await readFile(join(dir, 'package.json'), 'utf8'));
   const stored = await readFile(join(dir, INSTALL_HASH_FILE), 'utf8').catch(() => null);
   if (stored !== hash) {
@@ -113,6 +117,25 @@ export async function boot({ dir }: { dir: string }): Promise<Server> {
   throw new Error(`next dev did not answer GET / within ${BOOT_TIMEOUT_MS / 1000}s\n${stderr}`);
 }
 
+type StorageState = {
+  readonly cookies: readonly { name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean; sameSite: 'Lax' }[];
+  readonly origins: readonly [];
+};
+
+function signedInStorageState(url: string): StorageState {
+  const cookie = (name: string, value: string) => ({
+    name,
+    value,
+    domain: new URL(url).hostname,
+    path: '/',
+    expires: -1,
+    httpOnly: false,
+    secure: false,
+    sameSite: 'Lax' as const,
+  });
+  return { cookies: [cookie('uid', 'u_1'), cookie('name', 'Ada')], origins: [] };
+}
+
 async function main(): Promise<number> {
   const { values } = parseArgs({
     options: { cache: { type: 'string' }, 'keep-alive': { type: 'boolean', default: false } },
@@ -135,8 +158,17 @@ async function main(): Promise<number> {
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
   try {
+    const storageState = join(noriHome ?? cacheDir, 'signed-in.json');
+    await writeFile(storageState, JSON.stringify(signedInStorageState(server.url)));
+    const report = await verify({
+      path: dir,
+      url: server.url,
+      storageStates: [{ label: 'signed-in', file: storageState }],
+      anonymous: true,
+      budgets: DEFAULT_BUDGETS,
+    });
+    process.stdout.write(`${formatVerify(report)}\n`);
     const graph = await scan({ path: dir });
-    // verify goes here once unit 5 lands
     const expected = expectedSchema.parse(JSON.parse(await readFile(join(DEMO, 'expected.json'), 'utf8')));
     process.stdout.write(`${formatScore(score(graph, expected))}\n`);
     if (values['keep-alive']) {

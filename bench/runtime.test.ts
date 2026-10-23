@@ -22,7 +22,7 @@ const expected = { edges: [{ from: '/', to: '/about' }, { from: '/about', to: '/
 describe('score', () => {
   it('is zero when nothing is observed', () => {
     const result = score({ screens, transitions: [edge(A, B, 'inferred')] }, expected);
-    expect(result).toEqual({ observed: 0, truth: 3, hits: 0, extras: [], observedScreens: 1 });
+    expect(result).toEqual({ observed: 0, truth: 3, hits: 0, extras: [], missing: ['/ -> /about', '/ -> /pricing', '/about -> /pricing'], observedScreens: 1 });
   });
 
   it('counts observed edges that are in the truth as hits', () => {
