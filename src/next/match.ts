@@ -1,4 +1,4 @@
-import type { RoutePattern, UnresolvedReason } from '../graph/model.js';
+import type { NotAScreen, PageUrl, RoutePattern, UnresolvedReason } from '../graph/model.js';
 import type { PathTemplate } from './evaluate.js';
 import type { RouteFile, RouteSegment, RouteTable } from './routes.js';
 
@@ -252,4 +252,52 @@ export function resolveTemplate({
   const rival = (route: MatchRoute) => fillsDynamic(route) && !outranksOnStatic(chosen, route);
   if (fillsDynamic(chosen) || !viaDynamic.some(rival)) return toScreen(chosen);
   return unresolved('ambiguous-route');
+}
+
+export type UrlResolution =
+  | { readonly kind: 'screen'; readonly pattern: RoutePattern }
+  | { readonly kind: 'not-a-screen'; readonly why: NotAScreen };
+
+const notAScreen = (why: NotAScreen): UrlResolution => ({ kind: 'not-a-screen', why });
+
+// A concrete URL's pathname resolves like a literal href written on no page: no host folder or locale
+// of a source narrows it. Its query and fragment never name a route.
+export function resolveUrl({ matcher, url }: { matcher: Matcher; url: PageUrl }): UrlResolution {
+  const template: PathTemplate = [{ kind: 'text', text: decodedPath(new URL(url).pathname) }];
+  const resolution = resolveTemplate({ matcher, template, source: null });
+  switch (resolution.kind) {
+    case 'screen':
+      return resolution;
+    case 'excluded':
+      switch (resolution.why) {
+        case 'asset':
+        case 'handler':
+          return notAScreen(resolution.why);
+        // A pathname like //x reads as protocol-relative; no route serves it.
+        case 'external':
+        case 'same-page':
+          return notAScreen('no-matching-route');
+        default: {
+          const _exhaustive: never = resolution.why;
+          return _exhaustive;
+        }
+      }
+    case 'unresolved':
+      switch (resolution.reason) {
+        case 'no-matching-route':
+        case 'ambiguous-route':
+          return notAScreen(resolution.reason);
+        case 'dynamic-expression':
+        case 'runtime-only':
+          return notAScreen('no-matching-route');
+        default: {
+          const _exhaustive: never = resolution.reason;
+          return _exhaustive;
+        }
+      }
+    default: {
+      const _exhaustive: never = resolution;
+      return _exhaustive;
+    }
+  }
 }
