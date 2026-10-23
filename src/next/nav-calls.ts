@@ -14,7 +14,7 @@ const ROUTER_TRIGGERS: ReadonlyMap<string, Trigger> = new Map([
   ['push', { kind: 'router-push' }],
   ['replace', { kind: 'router-replace' }],
 ]);
-export const REDIRECTS: ReadonlySet<string> = new Set(['redirect', 'permanentRedirect']);
+const REDIRECTS: ReadonlySet<string> = new Set(['redirect', 'permanentRedirect']);
 const LINK: Trigger = { kind: 'link' };
 const REDIRECT: Trigger = { kind: 'redirect' };
 
@@ -40,7 +40,7 @@ function linkTarget(node: ts.JsxAttribute, sourceFile: ts.SourceFile): ts.Expres
   return hrefExpression(node);
 }
 
-function callTrigger(node: ts.CallExpression, sourceFile: ts.SourceFile): Trigger | null {
+export function callTrigger(node: ts.CallExpression, sourceFile: ts.SourceFile): Trigger | null {
   const callee = node.expression;
   if (ts.isPropertyAccessExpression(callee) && /router/i.test(callee.expression.getText(sourceFile))) {
     return ROUTER_TRIGGERS.get(callee.name.text) ?? null;

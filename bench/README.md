@@ -48,18 +48,18 @@ An edge is one source screen, one call site and one target screen, so a link in 
 | Cause | Edges | Fixable from source |
 | --- | --- | --- |
 | `runtime-guard`: the call only runs under state the screen never has | 15 | No |
-| `redirect-only-page`: the source or target page only calls `redirect()` | 12 | Yes; 8 fixed, 4 inbox-zero pages redirect through a helper |
+| `redirect-only-page`: the source or target page only calls `redirect()` | 12 | Yes; all 12 fixed |
 | `import-over-attribution`: a server-action file or lazy registry credits every importer | 7 | Yes; all 7 fixed |
 | `per-screen-prop`: a prop set differently per screen switches the call or its value | 4 | Hard |
 | `hole-into-catch-all`: a mostly unknown path lands on a root catch-all | 3 | Yes; all 3 fixed |
 | `both-branches`: the screen fixes which branch of a conditional runs | 1 | Hard |
 
-`precision/seed2.json` is a fresh sample drawn after those fixes (100 edges, seed 2, labelled 2026-10-22, no overlap with seed1). Two judges on different models labelled every edge independently and agreed on 96; the other 4 were settled against the source and say so in `why`. 64 of 100 are correct (64%, about ±9 points at 95%). Seed1 scores higher because the fixes were chosen from its errors; pooled over both samples, 119 of 179 decided edges are correct (66%).
+`precision/seed2.json` is a fresh sample drawn after those fixes (100 edges, seed 2, labelled 2026-10-22, no overlap with seed1). Two judges on different models labelled every edge independently and agreed on 96; the other 4 were settled against the source and say so in `why`. 64 of 100 are correct (64%, about ±9 points at 95%). Seed1 scores higher because the fixes were chosen from its errors; pooled over both samples, 119 of 179 decided edges are correct (66%). Redirect-only detection then learned helpers that only redirect and client pages that replace the route in an effect and render null. A link into a redirect-only page whose destination is unknown is now unresolved, and one whose destination leaves the app is dropped. Seed1 keeps 76 edges, 55 of the 74 decided ones correct (74.3%). Seed2 keeps 91, 64 of them correct (70.3%). Pooled, 119 of 165 are correct (72.1%). The two redirect-only edges left in seed2 are a redirect page's own redirect, which nori keeps on purpose because it records where the page sends people.
 
 | Cause | Edges | Fixable from source |
 | --- | --- | --- |
 | `runtime-guard` | 16 | No |
-| `redirect-only-page` | 10 | Yes. 7 are inbox-zero's `prefixPath(id, "/x")` fallback branch landing on a bare `/x` page that redirects through a helper; the rest are a client `router.replace` in an effect and a redirect to an external URL |
+| `redirect-only-page` | 10 | Yes; 8 fixed. The 2 left are a redirect page's own redirect, kept on purpose |
 | `per-screen-prop` | 5 | Hard |
 | `both-branches` | 3 | Hard |
 | `import-over-attribution` | 1 | Yes |

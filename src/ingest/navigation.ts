@@ -74,47 +74,53 @@ type SourcedCall = {
   readonly contexts: readonly { readonly source: RoutePattern; readonly targets: Targets }[];
 };
 
-type Forwarding = ReadonlyMap<RoutePattern, readonly RoutePattern[]>;
+type Landing = { readonly screens: readonly RoutePattern[]; readonly unresolved: UnresolvedReason | null };
+
+type Forwarding = ReadonlyMap<RoutePattern, Landing>;
 
 function forwardingOf(redirectOnly: ReadonlySet<RoutePattern>, calls: readonly SourcedCall[]): Forwarding {
   const destinations = new Map<RoutePattern, Set<RoutePattern>>();
-  const unforwardable = new Set<RoutePattern>();
+  const unresolved = new Map<RoutePattern, UnresolvedReason>();
   for (const { contexts } of calls) {
     for (const { source, targets } of contexts) {
       if (!redirectOnly.has(source)) continue;
-      if (classify(targets).kind !== 'resolved') unforwardable.add(source);
-      else destinations.set(source, new Set([...(destinations.get(source) ?? []), ...targets.screens]));
+      destinations.set(source, new Set([...(destinations.get(source) ?? []), ...targets.screens]));
+      if (targets.unresolved !== null && !unresolved.has(source)) unresolved.set(source, targets.unresolved);
     }
   }
   return new Map(
-    [...destinations].filter(([source]) => !unforwardable.has(source)).map(([source, to]) => [source, [...to]]),
+    [...destinations].map(([source, to]) => {
+      const reason = unresolved.get(source) ?? null;
+      return [source, reason === null ? { screens: [...to], unresolved: null } : { screens: [], unresolved: reason }];
+    }),
   );
 }
 
-function landingsOf(forwarding: Forwarding): (target: RoutePattern) => readonly RoutePattern[] {
+function landingsOf(forwarding: Forwarding): (target: RoutePattern) => Landing {
   const visiting = new Set<RoutePattern>();
-  const walk = (target: RoutePattern): readonly RoutePattern[] | null => {
+  const walk = (target: RoutePattern): Landing | null => {
     const next = forwarding.get(target);
-    if (next === undefined) return [target];
+    if (next === undefined) return { screens: [target], unresolved: null };
+    if (next.unresolved !== null) return next;
     if (visiting.has(target)) return null;
     visiting.add(target);
     const landings = new Set<RoutePattern>();
-    for (const destination of next) {
+    for (const destination of next.screens) {
       const reached = walk(destination);
-      if (reached === null) {
+      if (reached === null || reached.unresolved !== null) {
         visiting.delete(target);
-        return null;
+        return reached;
       }
-      for (const landing of reached) landings.add(landing);
+      for (const landing of reached.screens) landings.add(landing);
     }
     visiting.delete(target);
-    return [...landings];
+    return { screens: [...landings], unresolved: null };
   };
-  const memo = new Map<RoutePattern, readonly RoutePattern[]>();
+  const memo = new Map<RoutePattern, Landing>();
   return (target) => {
     const cached = memo.get(target);
     if (cached !== undefined) return cached;
-    const landings = walk(target) ?? [target];
+    const landings = walk(target) ?? { screens: [target], unresolved: null };
     memo.set(target, landings);
     return landings;
   };
@@ -189,10 +195,12 @@ export function navigationIngestion({
         if (!transitions.has(id)) transitions.set(id, { id, sourceStateId, trigger: call.trigger, target });
         backed.add(id);
       };
-      for (const pattern of targets.screens.flatMap(landings)) add({ kind: 'resolved', stateId: stateOf(pattern) });
-      if (targets.unresolved !== null) {
-        add({ kind: 'unresolved', reason: targets.unresolved, expression: expressionText(call) });
+      const landed = targets.screens.map(landings);
+      for (const pattern of landed.flatMap((landing) => landing.screens)) {
+        add({ kind: 'resolved', stateId: stateOf(pattern) });
       }
+      const unresolved = targets.unresolved ?? landed.find((landing) => landing.unresolved !== null)?.unresolved ?? null;
+      if (unresolved !== null) add({ kind: 'unresolved', reason: unresolved, expression: expressionText(call) });
     }
     if (backed.size === 0) continue;
 
