@@ -5,12 +5,14 @@ import type { Command } from './commands/command.js';
 import { exploreCommand } from './commands/explore.js';
 import { mcpCommand } from './commands/mcp.js';
 import { scanCommand } from './commands/scan.js';
+import { verifyCommand } from './commands/verify.js';
 import { readVersion } from './version.js';
 
 const COMMANDS: ReadonlyMap<string, Command> = new Map([
   ['scan', scanCommand],
   ['explore', exploreCommand],
   ['mcp', mcpCommand],
+  ['verify', verifyCommand],
 ]);
 
 function help(): string {
