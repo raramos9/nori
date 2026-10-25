@@ -16,6 +16,7 @@ import {
   type StepOutcome,
 } from '../graph/model.js';
 import { NoriError } from '../errors.js';
+import { resolveUrl } from '../next/match.js';
 import { discoverProject } from '../next/project.js';
 import { crawlSite, type Budgets } from '../runtime/crawl.js';
 import { parseInteractions } from '../runtime/interactions.js';
@@ -102,6 +103,10 @@ export async function verify(options: VerifyOptions): Promise<VerifyReport> {
   const seeds: PageUrl[] = [
     ...new Set(['/', ...ingestion.screens.map(({ routePattern }) => routePattern as string).filter((pattern) => !pattern.includes('['))]),
   ].map((pattern) => parsePageUrl(origin, pattern));
+  const screenKey = (url: PageUrl): string => {
+    const resolution = resolveUrl({ matcher: analysis.matcher, url });
+    return resolution.kind === 'screen' ? resolution.pattern : url;
+  };
 
   const databasePath = stateDatabasePath(application.id);
   await mkdir(dirname(databasePath), { recursive: true, mode: 0o700 });
@@ -111,7 +116,7 @@ export async function verify(options: VerifyOptions): Promise<VerifyReport> {
     const runs: RunOutcome[] = [];
     for (const { session, storageStatePath } of sessions) {
       const pending = join(appHome(application.id), 'runs', `${randomUUID()}.partial`);
-      const crawl = await crawlSite({ origin, session, storageStatePath, seeds, interactions, budgets: options.budgets, dir: pending }).catch(
+      const crawl = await crawlSite({ origin, session, storageStatePath, seeds, interactions, budgets: options.budgets, dir: pending, screenKey }).catch(
         async (error: unknown) => {
           await rm(pending, { recursive: true, force: true });
           throw error;

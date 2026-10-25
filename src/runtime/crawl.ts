@@ -454,6 +454,8 @@ export type CrawlOptions = {
   readonly interactions?: readonly Interaction[];
   readonly budgets: Budgets;
   readonly dir: string;
+  // Links whose (source, target) key pair was already queued wait until every new pair has been walked.
+  readonly screenKey?: (url: PageUrl) => string;
 };
 
 type Loaded = {
@@ -517,19 +519,22 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
       }
     };
 
+    const screenKey = options.screenKey ?? ((url: PageUrl) => url);
     const queue: Pending[] = [...new Set(options.seeds)].map((requested) => ({ start: { kind: 'entry' }, requested }));
+    const deferred: Pending[] = [];
+    const queuedPairs = new Set<string>();
     let stop: RunStop = 'frontier-exhausted';
     const exhausted = () =>
       recorder.allCaptures().length >= budgets.maxCaptures ||
       navigations.length >= budgets.maxNavigations ||
       Date.now() - startedAt.getTime() >= budgets.maxMillis;
-    for (let head = 0; head < queue.length; head++) {
+    for (let head = 0, deferredHead = 0; ; ) {
+      const pending = head < queue.length ? queue[head++] : deferred[deferredHead++];
+      if (pending === undefined) break;
       if (exhausted()) {
         stop = 'budget';
         break;
       }
-      const pending = queue[head];
-      if (pending === undefined) break;
       const remembered = memo.get(pending.requested);
       const loaded = remembered ?? (await load(pending.requested));
       if (remembered === undefined) memo.set(pending.requested, loaded);
@@ -551,9 +556,12 @@ export async function crawlSite(options: CrawlOptions): Promise<CrawlResult> {
         consoleErrors: remembered === undefined ? loaded.consoleErrors : [],
       });
 
-      if (remembered === undefined && loaded.landing.kind === 'captured') {
+      if (remembered === undefined && loaded.landing.kind === 'captured' && loaded.landingUrl !== null) {
+        const from = screenKey(loaded.landingUrl);
         for (const action of loaded.links) {
-          queue.push({ start: { kind: 'action', from: loaded.landing.capture, action }, requested: action.href });
+          const pair = `${from} ${screenKey(action.href)}`;
+          (queuedPairs.has(pair) ? deferred : queue).push({ start: { kind: 'action', from: loaded.landing.capture, action }, requested: action.href });
+          queuedPairs.add(pair);
         }
       }
     }
