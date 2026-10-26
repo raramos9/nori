@@ -407,6 +407,8 @@ export type BuildGraph = {
   readonly unmatchedRuns: readonly RunId[];
   readonly screens: readonly LoadedScreen[];
   readonly transitions: readonly LoadedTransition[];
+  readonly tests: readonly LoadedTestImport[];
+  readonly unmatchedImports: readonly TestImportId[];
 };
 
 export type TestImport = {

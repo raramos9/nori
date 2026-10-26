@@ -1,10 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { parseArtifactPath, type AppKey, type ArtifactPath, type RunId, type SnapshotId } from '../graph/model.js';
+import {
+  parseArtifactPath,
+  type AppKey,
+  type ArtifactPath,
+  type RunId,
+  type SnapshotId,
+  type TestImportId,
+} from '../graph/model.js';
 
 const DATABASE_FILE = 'graph.db';
 const RUNS_DIR = 'runs';
+const IMPORTS_DIR = 'imports';
 const STAGING_SUFFIX = '.partial';
 
 export function appHome(appKey: AppKey): string {
@@ -27,6 +35,18 @@ export function snapshotRunsDirectory(appKey: AppKey, snapshotId: SnapshotId): s
 
 export function runDirectory(appKey: AppKey, snapshotId: SnapshotId, runId: RunId): string {
   return join(snapshotRunsDirectory(appKey, snapshotId), runId);
+}
+
+export function importStagingDirectory(appKey: AppKey): string {
+  return join(appHome(appKey), IMPORTS_DIR, `${randomUUID()}${STAGING_SUFFIX}`);
+}
+
+export function snapshotImportsDirectory(appKey: AppKey, snapshotId: SnapshotId): string {
+  return join(appHome(appKey), IMPORTS_DIR, snapshotId);
+}
+
+export function importDirectory(appKey: AppKey, snapshotId: SnapshotId, importId: TestImportId): string {
+  return join(snapshotImportsDirectory(appKey, snapshotId), importId);
 }
 
 export function isInside(directory: string, path: string): boolean {

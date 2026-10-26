@@ -66,7 +66,7 @@ export function mustBeNull(value: unknown, description: string): void {
   if (value !== null) throw new Error(`${description} must be null`);
 }
 
-function parseDate(value: string, description: string): Date {
+export function parseDate(value: string, description: string): Date {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) throw new Error(`${description} ${JSON.stringify(value)} is not a date`);
   return date;
@@ -81,7 +81,7 @@ export function storedPageUrl(value: string): PageUrl {
 export const pageUrlSchema = z.string().transform(storedPageUrl);
 const routePattern = z.string().transform(parseRoutePattern);
 const triggerKind = z.enum(['link', 'router-push', 'router-replace', 'redirect']);
-const targetSearch = {
+export const targetSearch = {
   sourceUrl: pageUrlSchema,
   sourcePattern: routePattern,
   targetUrl: pageUrlSchema,
@@ -124,7 +124,7 @@ export const actionSchema = z.discriminatedUnion('kind', [
 
 export const redirectsSchema = z.array(z.object({ to: pageUrlSchema, via: z.enum(['http', 'client']) }));
 
-function parseJson<T>(schema: z.ZodType<T>, text: string, description: string): T {
+export function parseJson<T>(schema: z.ZodType<T, unknown>, text: string, description: string): T {
   const result = schema.safeParse(JSON.parse(text));
   if (!result.success) throw new Error(`${description}: ${z.prettifyError(result.error)}`);
   return result.data;

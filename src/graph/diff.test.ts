@@ -216,6 +216,8 @@ function build(spec: GraphSpec) {
     analysis,
     runs: runs.map(([, run]) => run),
     unmatchedRuns: spec.unmatchedRuns ?? [],
+    tests: [],
+    unmatchedImports: [],
     screens,
     transitions,
   };

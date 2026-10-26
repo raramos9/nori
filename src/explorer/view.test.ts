@@ -23,7 +23,7 @@ const appKey = TEST_APP.id;
 const snapshot = testSnapshot();
 const analysis = testAnalysis(snapshot, { analyzerVersion: '1' });
 const { commitSha } = snapshot;
-const build = { application: TEST_APP, snapshot, analysis, unmatchedRuns: [] };
+const build = { application: TEST_APP, snapshot, analysis, unmatchedRuns: [], tests: [], unmatchedImports: [] };
 
 function evidenceAt(file: string, line: number, extractor: string): StaticEvidence {
   const identity = {

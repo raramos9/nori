@@ -3,9 +3,12 @@ import {
   deriveEvidenceStatus,
   parseRunId,
   parseScreenId,
+  parseTestCaseKey,
+  parseTestImportId,
   parseTransitionId,
   type Analysis,
   type AnalysisId,
+  type AppKey,
   type BuildGraph,
   type BuildSummary,
   type CaptureEvidence,
@@ -18,6 +21,9 @@ import {
   type RunId,
   type ScreenObservation,
   type SnapshotId,
+  type TestImport,
+  type TestImportId,
+  type TestStepMatchRow,
   type TransitionObservation,
   type UIState,
   type Verdict,
@@ -38,6 +44,7 @@ import {
   parseVerdict,
 } from './rows.js';
 import type { Database } from './schema.js';
+import { matchedTransition, parseTestImport, parseTestStepMatch } from './test-rows.js';
 
 type Db = Kysely<Database>;
 
@@ -244,7 +251,45 @@ export async function loadBuild(db: Db, analysisId: AnalysisId): Promise<BuildGr
       return { transition, observations, status: deriveEvidenceStatus(observations) };
     });
 
-    return { application, snapshot, analysis, runs, unmatchedRuns, screens, transitions };
+    const stepRows = await trx
+      .selectFrom('test_step_matches')
+      .selectAll()
+      .where('analysis_id', '=', analysisId)
+      .orderBy('import_id')
+      .orderBy('case_key')
+      .orderBy('retry')
+      .orderBy('seq')
+      .execute();
+    const stepsByImport = new Map<string, TestStepMatchRow[]>();
+    for (const row of stepRows) {
+      const where = `Test step ${row.case_key}/${row.retry}/${row.seq} of import ${row.import_id}`;
+      const match = parseTestStepMatch(row.match, `${where}: match`);
+      if (match.kind !== row.kind || matchedTransition(match) !== row.transition_id) {
+        throw new Error(`${where}: kind or transition_id disagrees with its match`);
+      }
+      const steps = stepsByImport.get(row.import_id) ?? [];
+      stepsByImport.set(row.import_id, steps);
+      steps.push({ caseKey: parseTestCaseKey(row.case_key), retry: row.retry, seq: row.seq, match });
+    }
+    const importRows = await trx
+      .selectFrom('test_imports')
+      .innerJoin('test_matches', 'test_matches.import_id', 'test_imports.id')
+      .selectAll('test_imports')
+      .where('test_matches.analysis_id', '=', analysisId)
+      .orderBy('test_imports.imported_at')
+      .orderBy('test_imports.id')
+      .execute();
+    const tests = importRows.map((row) => ({ ...parseTestImport(snapshot.appKey, row), matches: stepsByImport.get(row.id) ?? [] }));
+    const unmatchedImports = (
+      await trx
+        .selectFrom('test_match_failures')
+        .select('import_id')
+        .where('analysis_id', '=', analysisId)
+        .orderBy('import_id')
+        .execute()
+    ).map((row) => parseTestImportId(row.import_id));
+
+    return { application, snapshot, analysis, runs, unmatchedRuns, screens, transitions, tests, unmatchedImports };
   });
 }
 
@@ -286,4 +331,29 @@ export async function matchState(db: Db, analysisId: AnalysisId): Promise<MatchS
 export async function runsOfSnapshot(db: Db, snapshotId: SnapshotId): Promise<ReadonlyMap<RunId, Run>> {
   const rows = await db.selectFrom('runs').selectAll().where('snapshot_id', '=', snapshotId).execute();
   return new Map(rows.map((row) => [parseRunId(row.id), parseRun(row)]));
+}
+
+export async function importMatchState(db: Db, analysisId: AnalysisId): Promise<{
+  readonly matched: ReadonlySet<TestImportId>;
+  readonly failed: ReadonlyMap<TestImportId, string>;
+}> {
+  const matched = await db.selectFrom('test_matches').select('import_id').where('analysis_id', '=', analysisId).execute();
+  const failed = await db
+    .selectFrom('test_match_failures')
+    .select(['import_id', 'error'])
+    .where('analysis_id', '=', analysisId)
+    .execute();
+  return {
+    matched: new Set(matched.map((row) => parseTestImportId(row.import_id))),
+    failed: new Map(failed.map((row) => [parseTestImportId(row.import_id), row.error])),
+  };
+}
+
+export async function importsOfSnapshot(
+  db: Db,
+  appKey: AppKey,
+  snapshotId: SnapshotId,
+): Promise<ReadonlyMap<TestImportId, TestImport>> {
+  const rows = await db.selectFrom('test_imports').selectAll().where('snapshot_id', '=', snapshotId).execute();
+  return new Map(rows.map((row) => [parseTestImportId(row.id), parseTestImport(appKey, row).testImport]));
 }

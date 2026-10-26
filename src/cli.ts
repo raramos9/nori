@@ -4,6 +4,7 @@ import { errorCode, NoriError } from './errors.js';
 import type { Command } from './commands/command.js';
 import { diffCommand } from './commands/diff.js';
 import { exploreCommand } from './commands/explore.js';
+import { importCommand } from './commands/import.js';
 import { mcpCommand } from './commands/mcp.js';
 import { scanCommand } from './commands/scan.js';
 import { verifyCommand } from './commands/verify.js';
@@ -15,6 +16,7 @@ const COMMANDS: ReadonlyMap<string, Command> = new Map([
   ['explore', exploreCommand],
   ['mcp', mcpCommand],
   ['verify', verifyCommand],
+  ['import', importCommand],
 ]);
 
 function help(): string {
