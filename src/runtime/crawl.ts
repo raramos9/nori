@@ -1,5 +1,7 @@
-import { createHash } from 'node:crypto';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdir, rename, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Browser, type BrowserContext, chromium, errors, type Page, type Request } from 'playwright-core';
 import { z } from 'zod';
@@ -304,10 +306,24 @@ export class RunRecorder {
   }
 }
 
+const MAC_CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+
+// Playwright refuses a bare `YES` argument, so a wrapper hands Chrome `-NSAppSleepDisabled YES`, which
+// keeps CoreFoundation from taking the App Nap assertion that can wedge Chrome's main thread.
+async function appNapDisabledChrome(): Promise<string | undefined> {
+  if (process.platform !== 'darwin' || !existsSync(MAC_CHROME)) return undefined;
+  const wrapper = join(tmpdir(), 'nori-chrome-no-app-nap.sh');
+  const draft = `${wrapper}.${process.pid}.${randomUUID()}`;
+  await writeFile(draft, `#!/bin/sh\nexec '${MAC_CHROME}' "$@" -NSAppSleepDisabled YES\n`, { mode: 0o755 });
+  await rename(draft, wrapper);
+  return wrapper;
+}
+
 async function launchChrome(proxyServer: string): Promise<Browser> {
+  const executablePath = await appNapDisabledChrome();
   try {
     return await chromium.launch({
-      channel: 'chrome',
+      ...(executablePath === undefined ? { channel: 'chrome' } : { executablePath }),
       headless: true,
       proxy: { server: proxyServer },
       args: [
