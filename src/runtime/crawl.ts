@@ -27,6 +27,10 @@ const SETTLE_CAP_MS = 5_000;
 const QUIET_WINDOW_MS = 500;
 const POLL_MS = 100;
 const LOCATOR_TIMEOUT_MS = 3_000;
+// macOS can wedge Chrome's main thread in an App Nap assertion, after which Chrome answers nothing,
+// not even Browser.close. A browser that misses a ping for this long is killed with its process group.
+const WEDGE_CHECK_MS = 10_000;
+const CLOSE_GRACE_MS = 5_000;
 
 export type RequestDecision = 'allowed' | 'allowlisted' | 'blocked' | 'internal';
 
@@ -335,10 +339,30 @@ export async function launchIsolatedBrowser({ origin, recorder }: { origin: Orig
   });
   try {
     const browser = await launchChrome(proxy.server);
+    const cdp = await browser.newBrowserCDPSession();
+    const { processInfo } = await cdp.send('SystemInfo.getProcessInfo');
+    const pid = processInfo.find(({ type }) => type === 'browser')!.id;
+    const kill = () => {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      }
+    };
+    let answered = true;
+    const watchdog = setInterval(() => {
+      if (!answered) return kill();
+      answered = false;
+      cdp.send('Browser.getVersion').then(() => (answered = true), () => {});
+    }, WEDGE_CHECK_MS).unref();
+    browser.on('disconnected', () => clearInterval(watchdog));
     return {
       browser,
       close: async () => {
+        clearInterval(watchdog);
+        const timer = setTimeout(kill, CLOSE_GRACE_MS);
         await browser.close();
+        clearTimeout(timer);
         await proxy.close();
       },
     };
