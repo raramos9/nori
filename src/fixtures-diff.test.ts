@@ -1,10 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { analyze } from './commands/scan.js';
+import { analyze, scan } from './commands/scan.js';
+import { comparable, diffBuilds, type BuildDiff } from './graph/diff.js';
+import type { BuildGraph } from './graph/model.js';
 import { demoHistory } from './testing/demo-history.js';
 import { pairKey, resolvedPairs } from './testing/resolved-pairs.js';
 
@@ -17,15 +20,41 @@ const expectedSchema = z.object({
   edges: z.object({ added: z.array(edge), removed: z.array(edge) }),
 });
 
-const difference = (left: Set<string>, right: Set<string>) => [...left].filter((key) => !right.has(key)).sort();
 const keys = (edges: { from: string; to: string }[]) => edges.map(pairKey).sort();
 
-async function snapshot(path: string) {
-  const { ingestion } = await analyze({ path, createdAt: CREATED_AT });
-  return {
-    screens: new Set(ingestion.screens.map((screen) => screen.routePattern)),
-    pairs: resolvedPairs(ingestion),
-  };
+function diffOf(base: BuildGraph, head: BuildGraph): BuildDiff {
+  const pair = comparable(base, head);
+  if (pair.kind !== 'comparable') throw new Error(pair.kind);
+  return diffBuilds(pair.pair);
+}
+
+function screens(diff: BuildDiff, kind: 'added' | 'removed'): string[] {
+  return diff.changes
+    .flatMap((change) => (change.kind === kind && change.subject.kind === 'screen' ? [change.subject.routePattern] : []))
+    .sort();
+}
+
+function graphPairs(graph: BuildGraph): Set<string> {
+  const patterns = new Map(graph.screens.flatMap(({ screen, states }) => states.map((state) => [state.id, screen.routePattern])));
+  const pairs = new Set<string>();
+  for (const { transition } of graph.transitions) {
+    const from = patterns.get(transition.sourceStateId);
+    if (from !== undefined && transition.target.kind === 'resolved') {
+      const to = patterns.get(transition.target.stateId);
+      if (to !== undefined) pairs.add(pairKey({ from, to }));
+    }
+  }
+  return pairs;
+}
+
+function edges(diff: BuildDiff, kind: 'added' | 'removed', other: BuildGraph): string[] {
+  const otherPairs = graphPairs(other);
+  const pairs = diff.changes.flatMap((change) =>
+    change.kind === kind && change.subject.kind === 'transition' && change.subject.to.kind === 'route'
+      ? [pairKey({ from: change.subject.from, to: change.subject.to.pattern })]
+      : [],
+  );
+  return [...new Set(pairs)].filter((pair) => !otherPairs.has(pair)).sort();
 }
 
 describe('route-added-edge-removed fixture', () => {
@@ -34,31 +63,52 @@ describe('route-added-edge-removed fixture', () => {
   );
   const history = demoHistory('route-added-edge-removed');
   const baseRoot = `${history.root}-base`;
-  let base: Awaited<ReturnType<typeof snapshot>>;
-  let head: Awaited<ReturnType<typeof snapshot>>;
+  const originalHome = process.env.NORI_HOME;
+  const home = mkdtempSync(join(tmpdir(), 'nori-fixtures-diff-'));
+  let base: BuildGraph;
+  let head: BuildGraph;
 
   beforeAll(async () => {
+    process.env.NORI_HOME = home;
     execFileSync('git', ['worktree', 'add', '-q', '--detach', baseRoot, history.base], { cwd: history.root });
-    base = await snapshot(baseRoot);
-    head = await snapshot(history.root);
+    base = await scan({ path: baseRoot, createdAt: CREATED_AT });
+    head = await scan({ path: history.root, createdAt: CREATED_AT });
   });
 
   afterAll(() => {
+    process.env.NORI_HOME = originalHome;
+    rmSync(home, { recursive: true, force: true });
     rmSync(baseRoot, { recursive: true, force: true });
     rmSync(history.root, { recursive: true, force: true });
   });
 
   it('starts from the demo as it is today', async () => {
-    expect(base).toEqual(await snapshot(join(FIXTURES, 'demo')));
+    const today = async (path: string) => {
+      const { ingestion } = await analyze({ path, createdAt: CREATED_AT });
+      return { screens: ingestion.screens.map((screen) => screen.routePattern).sort(), pairs: resolvedPairs(ingestion) };
+    };
+    expect(await today(baseRoot)).toEqual(await today(join(FIXTURES, 'demo')));
   });
 
   it('adds and removes exactly the planned screens', () => {
-    expect(difference(head.screens, base.screens)).toEqual(expected.screens.added);
-    expect(difference(base.screens, head.screens)).toEqual(expected.screens.removed);
+    const diff = diffOf(base, head);
+    expect(screens(diff, 'added')).toEqual(expected.screens.added);
+    expect(screens(diff, 'removed')).toEqual(expected.screens.removed);
   });
 
   it('adds and removes exactly the planned edges', () => {
-    expect(difference(head.pairs, base.pairs)).toEqual(keys(expected.edges.added));
-    expect(difference(base.pairs, head.pairs)).toEqual(keys(expected.edges.removed));
+    const diff = diffOf(base, head);
+    expect(edges(diff, 'added', base)).toEqual(keys(expected.edges.added));
+    expect(edges(diff, 'removed', head)).toEqual(keys(expected.edges.removed));
+  });
+
+  it('reports nothing but additions and removals, and no coverage gaps', () => {
+    const diff = diffOf(base, head);
+    expect(diff.changes.every((change) => change.kind === 'added' || change.kind === 'removed')).toBe(true);
+    expect(diff.gaps).toEqual([]);
+  });
+
+  it('finds nothing against itself', () => {
+    expect(diffOf(head, head)).toMatchObject({ changes: [], gaps: [] });
   });
 });
