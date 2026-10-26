@@ -124,3 +124,36 @@ export async function readHead({ root }: { root: string }): Promise<GitHead> {
     branch: branch === 'HEAD' ? null : branch,
   };
 }
+
+export async function resolveCommit({ root, ref }: { root: string; ref: string }): Promise<CommitSha> {
+  const result = await runGit({
+    cwd: root,
+    args: ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`],
+  });
+  if (result.kind === 'failed') throw new NoriError(`${ref} is not a commit in the git repository at ${root}`);
+  return parseCommitSha(result.stdout.trim());
+}
+
+export async function addDetachedWorktree({
+  root,
+  dir,
+  commitSha,
+}: {
+  root: string;
+  dir: string;
+  commitSha: CommitSha;
+}): Promise<void> {
+  await runGitOrThrow({
+    root,
+    args: ['worktree', 'add', '--detach', '--quiet', dir, commitSha],
+    failure: `git could not check out ${commitSha.slice(0, 7)}`,
+  });
+}
+
+export async function removeWorktree({ root, dir }: { root: string; dir: string }): Promise<void> {
+  await runGitOrThrow({
+    root,
+    args: ['worktree', 'remove', '--force', dir],
+    failure: `git could not remove the worktree ${dir}`,
+  });
+}
