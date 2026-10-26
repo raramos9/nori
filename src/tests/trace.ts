@@ -10,8 +10,8 @@ import {
   type TestStep,
   type TraceRejection,
 } from '../graph/model.js';
-import { cleanText } from './playwright-report.js';
-import { LIMITS, readZip } from './zip.js';
+import { cleanText, LIMITS } from './limits.js';
+import { readZip } from './zip.js';
 
 export const SUPPORTED_VERSIONS: ReadonlySet<number> = new Set([10]);
 
@@ -99,7 +99,14 @@ const lineSchemas = {
       method: z.string(),
       params: z.object({ url: optionalString, selector: optionalString }).default({ url: null, selector: null }),
     })
-    .transform(({ callId, parentId, method, params }) => ({ type: 'before' as const, callId, parentId, method, ...params })),
+    .transform(({ callId, parentId, method, params }) => ({
+      type: 'before' as const,
+      callId,
+      parentId,
+      method,
+      url: params.url,
+      selector: params.selector === null ? null : cleanText(params.selector),
+    })),
   after: z
     .object({ callId: z.string(), endTime: z.number(), error: z.object({ message: z.string().default('') }).optional() })
     .transform(({ callId, endTime, error }) => ({
@@ -132,23 +139,25 @@ function isLineType(value: unknown): value is TraceLine['type'] {
 }
 
 const typeSchema = z.object({ type: z.unknown() });
+const METHOD = /^[A-Za-z][A-Za-z0-9]{0,63}$/;
+const RUNNER_METHOD = /^(?:pw:api|test\.[A-Za-z]{1,32})$/;
 
 // A snapshot node is [tag, attributes, ...children]; a reference into an earlier snapshot is [[n, m]]
-// and a text node is a string, so neither can be the target.
+// and a text node is a string, so neither can be the target. Past snapshotNodes the anchor is unknown.
 function findTarget(html: unknown): Target | null {
   const pending: unknown[] = [html];
+  let queued = 1;
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     if (!Array.isArray(node) || typeof node[0] !== 'string') continue;
-    const [tag, attributes, ...children] = node;
-    if (typeof attributes === 'object' && attributes !== null && !Array.isArray(attributes)) {
-      if (Object.hasOwn(attributes, TARGET_ATTRIBUTE)) {
-        const href: unknown = Reflect.get(attributes, 'href');
-        return { tag, href: typeof href === 'string' ? href : null };
-      }
-      pending.push(...children);
-    } else {
-      pending.push(attributes, ...children);
+    const attributes: unknown = node[1];
+    const hasAttributes = typeof attributes === 'object' && attributes !== null && !Array.isArray(attributes);
+    if (hasAttributes && Object.hasOwn(attributes, TARGET_ATTRIBUTE)) {
+      const href: unknown = Reflect.get(attributes, 'href');
+      return { tag: cleanText(node[0]), href: typeof href === 'string' ? href : null };
     }
+    queued += node.length;
+    if (queued > LIMITS.snapshotNodes) return null;
+    for (let child = node.length - 1; child >= (hasAttributes ? 2 : 1); child--) pending.push(node[child]);
   }
   return null;
 }
@@ -160,13 +169,21 @@ export function parseTraceLine(json: unknown): ParsedLine {
   if (!head.success) return { kind: 'bad' };
   if (!isLineType(head.data.type)) return { kind: 'unknown' };
   const result = lineSchemas[head.data.type].safeParse(json);
-  return result.success ? { kind: 'line', line: result.data } : { kind: 'bad' };
+  if (!result.success) return { kind: 'bad' };
+  const line = result.data;
+  if (line.type === 'before' && !METHOD.test(line.method) && !RUNNER_METHOD.test(line.method)) return { kind: 'unknown' };
+  return { kind: 'line', line };
 }
 
 type Lines = { readonly kind: 'lines'; readonly lines: readonly TraceLine[] } | { readonly kind: 'rejected'; readonly why: TraceRejection };
 
 // A killed worker leaves a torn last line, so that one is tolerated; any other bad line rejects the entry.
 function parseLines(entry: string, bytes: Buffer): Lines {
+  let count = 1;
+  for (let at = bytes.indexOf(0x0a); at !== -1; at = bytes.indexOf(0x0a, at + 1)) {
+    count += 1;
+    if (count > LIMITS.linesPerEntry) return { kind: 'rejected', why: { kind: 'too-many-lines', entry, count } };
+  }
   const raw = bytes.toString('utf8').split('\n');
   const last = raw.findLastIndex((text) => text.trim() !== '');
   const lines: TraceLine[] = [];
@@ -209,11 +226,7 @@ export async function readTrace(file: string): Promise<TraceResult> {
   });
   if (read.kind === 'rejected') return read;
   if (entries === 0) return { kind: 'rejected', why: { kind: 'no-trace-entries' } };
-  const trace = stepsOf({ runner, contexts });
-  if (trace.steps.length > LIMITS.stepsPerAttempt) {
-    return { kind: 'rejected', why: { kind: 'too-many-steps', count: trace.steps.length } };
-  }
-  return { kind: 'read', trace };
+  return stepsOf({ runner, contexts });
 }
 
 type Call = {
@@ -236,7 +249,17 @@ type Draft = {
   readonly chain: [string, ...string[]];
 };
 
-type PageState = { current: string | null; after: number; last: Draft | null };
+// navigate and input hold the orders of the page's qualifying calls, ascending.
+type PageState = {
+  current: string | null;
+  after: number;
+  last: Draft | null;
+  readonly navigate: number[];
+  readonly input: number[];
+};
+
+// stepCount counts redirect hops too, so a chain cannot grow past the step budget.
+type Attempt = { readonly calls: Map<string, Call>; callCount: number; stepCount: number };
 
 function documentUrl(raw: string, base?: Origin): string | null {
   let url: URL;
@@ -277,34 +300,50 @@ function causeOf(call: Call, origin: Origin): StepCause {
   return { kind: 'input', method: call.method, selector: call.selector, anchor };
 }
 
-// The most recent navigation method in the window wins; otherwise its most recent input method.
-function windowCause(calls: readonly Call[], pageId: string, after: number, through: number): Call | null {
-  let input: Call | null = null;
-  for (let order = through; order > after; order--) {
-    const call = calls[order];
-    if (call === undefined || call.page !== pageId) continue;
-    if (isNavigateMethod(call.method)) return call;
-    if (input === null && INPUT_METHODS.has(call.method)) input = call;
+// Index of the last value <= limit in an ascending array, or -1.
+function lastAtOrBefore(values: readonly number[], limit: number): number {
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if ((values[middle] ?? Infinity) <= limit) low = middle + 1;
+    else high = middle;
   }
-  return input;
+  return low - 1;
 }
 
-function latestQualifying(calls: readonly Call[], pageId: string, through: number): Call | null {
-  for (let order = through; order >= 0; order--) {
-    const call = calls[order];
-    if (call !== undefined && call.page === pageId && (isNavigateMethod(call.method) || INPUT_METHODS.has(call.method))) {
-      return call;
-    }
-  }
-  return null;
+const latest = (orders: readonly number[], through: number): number => orders[lastAtOrBefore(orders, through)] ?? -1;
+
+// The most recent navigation method in the window wins; otherwise its most recent input method.
+function windowCause(page: PageState, through: number): number | null {
+  const navigate = latest(page.navigate, through);
+  if (navigate > page.after) return navigate;
+  const input = latest(page.input, through);
+  return input > page.after ? input : null;
 }
+
+function assignPage(call: Call, page: PageState): void {
+  const orders = isNavigateMethod(call.method) ? page.navigate : INPUT_METHODS.has(call.method) ? page.input : null;
+  // Calls on one page run one after another, so a call whose first snapshot arrives after a later call's
+  // is left out of the windows rather than breaking their order.
+  if (orders !== null && call.order > (orders[orders.length - 1] ?? -1)) orders.push(call.order);
+}
+
+const tooMany = (why: TraceRejection) => ({ kind: 'rejected', why }) as const;
 
 // A URL is first seen in some call's snapshot, often a later call's (a soft navigation shows up in the
 // next expect). A before snapshot means the cause ran strictly earlier; action or after means up to and
 // including that call. The window opens after the call that produced the page's previous URL.
-function contextSteps(lines: readonly TraceLine[], calls: Map<string, Call>): Draft[] {
+function contextSteps(lines: readonly TraceLine[], attempt: Attempt): Draft[] | ReturnType<typeof tooMany> {
   const ordered: Call[] = [];
   const pages = new Map<string, PageState>();
+  const pageOf = (pageId: string): PageState => {
+    const found = pages.get(pageId);
+    if (found !== undefined) return found;
+    const page: PageState = { current: null, after: -1, last: null, navigate: [], input: [] };
+    pages.set(pageId, page);
+    return page;
+  };
   const drafts: Draft[] = [];
   let origin: Origin | null = null;
   for (const line of lines) {
@@ -313,20 +352,25 @@ function contextSteps(lines: readonly TraceLine[], calls: Map<string, Call>): Dr
         origin ??= originOf(line.baseURL);
         break;
       case 'before': {
+        attempt.callCount += 1;
+        if (attempt.callCount > LIMITS.callsPerAttempt) return tooMany({ kind: 'too-many-calls', count: attempt.callCount });
         const call: Call = { order: ordered.length, method: line.method, url: line.url, selector: line.selector, end: -Infinity, page: null, target: null };
         ordered.push(call);
-        calls.set(line.callId, call);
+        attempt.calls.set(line.callId, call);
         break;
       }
       case 'after': {
-        const call = calls.get(line.callId);
+        const call = attempt.calls.get(line.callId);
         if (call !== undefined) call.end = Math.max(call.end, line.endTime);
         break;
       }
       case 'frame-snapshot': {
-        const call = calls.get(line.callId);
+        const call = attempt.calls.get(line.callId);
         if (call !== undefined) {
-          call.page ??= line.pageId;
+          if (call.page === null) {
+            call.page = line.pageId;
+            assignPage(call, pageOf(line.pageId));
+          }
           call.end = Math.max(call.end, line.timestamp);
           if (line.phase === 'action') call.target = line.target;
         }
@@ -334,30 +378,33 @@ function contextSteps(lines: readonly TraceLine[], calls: Map<string, Call>): Dr
         if (url === null) break;
         origin ??= originOf(url);
         if (origin === null) break;
-        const page = pages.get(line.pageId) ?? { current: null, after: -1, last: null };
-        pages.set(line.pageId, page);
+        const page = pageOf(line.pageId);
         if (url === page.current) break;
         const through = call === undefined ? ordered.length - 1 : line.phase === 'before' ? call.order - 1 : call.order;
-        const cause = windowCause(ordered, line.pageId, page.after, through);
+        const causeOrder = windowCause(page, through);
         const { last } = page;
-        if (cause === null && last !== null && last.causeOrder !== null && latestQualifying(ordered, line.pageId, through)?.order === last.causeOrder) {
+        const latestQualifying = Math.max(latest(page.navigate, through), latest(page.input, through));
+        attempt.stepCount += 1;
+        if (attempt.stepCount > LIMITS.stepsPerAttempt) return tooMany({ kind: 'too-many-steps', count: attempt.stepCount });
+        if (causeOrder === null && last !== null && last.causeOrder !== null && latestQualifying === last.causeOrder) {
           last.chain.push(url);
           last.at = line.timestamp;
           page.current = url;
           break;
         }
+        const cause = causeOrder === null ? undefined : ordered[causeOrder];
         const draft: Draft = {
           pageId: line.pageId,
           at: line.timestamp,
           origin,
-          cause: cause === null ? { kind: 'none' } : causeOf(cause, origin),
-          causeOrder: cause?.order ?? null,
+          cause: cause === undefined ? { kind: 'none' } : causeOf(cause, origin),
+          causeOrder,
           from: page.current,
           chain: [url],
         };
         drafts.push(draft);
         page.current = url;
-        page.after = cause?.order ?? through;
+        page.after = causeOrder ?? through;
         page.last = draft;
         break;
       }
@@ -390,17 +437,37 @@ function runnerCalls(lines: readonly TraceLine[]): readonly RunnerCall[] {
 
 // Pure: the per-page URL timeline and call windows of one attempt, then each passing expect counted
 // on the step its page was on when it settled, and each failing leaf call located the same way.
-export function stepsOf({ runner, contexts }: TraceEntries): AttemptTrace {
-  const calls = new Map<string, Call>();
-  const drafts = contexts.flatMap((lines) => contextSteps(lines, calls)).sort((a, b) => a.at - b.at);
-  const assertions = drafts.map(() => 0);
+export function stepsOf({ runner, contexts }: TraceEntries): TraceResult {
+  const attempt: Attempt = { calls: new Map(), callCount: 0, stepCount: 0 };
+  const drafts: Draft[] = [];
+  for (const lines of contexts) {
+    const steps = contextSteps(lines, attempt);
+    if (!Array.isArray(steps)) return steps;
+    drafts.push(...steps);
+  }
+  drafts.sort((a, b) => a.at - b.at);
+
+  const times = drafts.map(({ at }) => at);
+  const byPage = new Map<string, { readonly times: number[]; readonly indices: number[] }>();
+  drafts.forEach(({ pageId, at }, index) => {
+    const page = byPage.get(pageId) ?? { times: [], indices: [] };
+    byPage.set(pageId, page);
+    page.times.push(at);
+    page.indices.push(index);
+  });
   const stepAt = (callId: string, runnerEnd: number): number | null => {
-    const call = calls.get(callId);
+    const call = attempt.calls.get(callId);
     const settled = Math.max(runnerEnd, call?.end ?? -Infinity);
-    const page = call?.page ?? null;
-    const index = drafts.findLastIndex(({ at, pageId }) => at <= settled && (page === null || pageId === page));
-    return index === -1 ? null : index;
+    const pageId = call?.page ?? null;
+    if (pageId === null) {
+      const index = lastAtOrBefore(times, settled);
+      return index === -1 ? null : index;
+    }
+    const page = byPage.get(pageId);
+    return page === undefined ? null : (page.indices[lastAtOrBefore(page.times, settled)] ?? null);
   };
+
+  const assertions = drafts.map(() => 0);
   const failures: TestFailure[] = [];
   for (const call of runnerCalls(runner)) {
     if (call.error !== null && FAILING_METHODS.has(call.method)) {
@@ -417,5 +484,5 @@ export function stepsOf({ runner, contexts }: TraceEntries): AttemptTrace {
     pageIndex.set(pageId, page);
     return { seq, page, at, origin, cause, from, chain, assertions: assertions[seq] ?? 0 };
   });
-  return { steps, failures };
+  return { kind: 'read', trace: { steps, failures } };
 }

@@ -4,20 +4,8 @@ import { crc32, inflateRawSync } from 'node:zlib';
 import { errorCode } from '../errors.js';
 import type { TraceRejection, TracelessReason } from '../graph/model.js';
 import { isInside } from '../runtime/layout.js';
+import { cleanText, LIMITS } from './limits.js';
 
-export const LIMITS = {
-  traceFileBytes: 1024 * 1024 * 1024,
-  centralDirectoryBytes: 16 * 1024 * 1024,
-  entries: 10_000,
-  entryBytes: 64 * 1024 * 1024,
-  totalBytes: 256 * 1024 * 1024,
-  stepsPerAttempt: 10_000,
-  reportBytes: 64 * 1024 * 1024,
-  cases: 10_000,
-  attemptsPerCase: 16,
-  reportDepth: 64,
-  textChars: 4096,
-} as const;
 
 export type Untrusted =
   | { readonly kind: 'opened'; readonly copy: string; readonly bytes: number }
@@ -160,9 +148,11 @@ function decodeName(raw: Buffer): string | null {
   }
 }
 
+// A safe name is one cleanText leaves unchanged, so every name a rejection reports is clean.
 function isSafeName(name: string): boolean {
   return (
     name !== '' &&
+    cleanText(name) === name &&
     !/[\u0000-\u001f\\]/.test(name) &&
     !name.startsWith('/') &&
     !/^[A-Za-z]:/.test(name) &&
@@ -230,7 +220,7 @@ async function centralDirectory(handle: FileHandle, size: number): Promise<{ ent
     if (next > cd.length) reject({ kind: 'truncated' });
     const rawName = cd.subarray(p + CENTRAL_BYTES, p + CENTRAL_BYTES + nameLength);
     const name = decodeName(rawName);
-    const shown = name ?? rawName.toString('latin1');
+    const shown = cleanText(name ?? rawName.toString('latin1'));
     if (name === null || !isSafeName(name)) reject({ kind: 'unsafe-name', entry: shown });
     if (seen.has(shown)) reject({ kind: 'duplicate-name', entry: shown });
     seen.add(shown);
@@ -284,6 +274,15 @@ function inflate(entry: Entry, compressed: Buffer): Buffer {
   }
 }
 
+// visit parses untrusted bytes; whatever it throws is the entry's fault, never the import's.
+function visitSafely(visit: (name: string, bytes: Buffer) => TraceRejection | null, name: string, bytes: Buffer): TraceRejection | null {
+  try {
+    return visit(name, bytes);
+  } catch {
+    return { kind: 'bad-trace-entry', entry: name };
+  }
+}
+
 // Validates every entry from the central directory and the local headers, then inflates only the
 // selected ones, one at a time, handing each to visit and dropping it. Never extracts, never writes.
 export async function readZip({
@@ -314,7 +313,7 @@ export async function readZip({
       const bytes = inflate(entry, await readAt(handle, entry.dataStart, entry.compressedSize));
       if (bytes.length !== entry.uncompressedSize) reject({ kind: 'size-mismatch', entry: entry.name });
       if (crc32(bytes) !== entry.crc) reject({ kind: 'crc-mismatch', entry: entry.name });
-      const refused = visit(entry.name, bytes);
+      const refused = visitSafely(visit, entry.name, bytes);
       if (refused !== null) return { kind: 'rejected', why: refused };
     }
     return { kind: 'read' };

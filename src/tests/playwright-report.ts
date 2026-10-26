@@ -5,15 +5,7 @@ import { z } from 'zod';
 import { errorCode, NoriError } from '../errors.js';
 import { testCaseKey } from '../graph/ids.js';
 import type { AttemptStatus, TestCase, TestCaseKey, TestOutcome } from '../graph/model.js';
-import { LIMITS } from './zip.js';
-
-const ANSI = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[@-_])/g;
-const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/g;
-
-// Nothing a report or trace says may drive a terminal or a PR comment.
-export function cleanText(value: string): string {
-  return value.replace(ANSI, '').replace(CONTROL, '').slice(0, LIMITS.textChars);
-}
+import { cleanText, LIMITS } from './limits.js';
 
 export type ReportAttempt = {
   readonly retry: number;
@@ -115,6 +107,7 @@ function attemptOf(reportPath: string, result: z.infer<typeof resultSchema>): Re
   const trace = result.attachments.find(
     ({ name, contentType, path }) => name === 'trace' && contentType === 'application/zip' && path !== undefined,
   );
+  if (trace?.path !== undefined && cleanText(trace.path) !== trace.path) fail(reportPath, 'a trace path carries control characters');
   return {
     retry: result.retry,
     status: result.status,

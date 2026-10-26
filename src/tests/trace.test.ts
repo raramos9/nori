@@ -4,7 +4,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { text, zip } from '../testing/zip-builder.js';
-import { parseTraceLine, readTrace, stepsOf, type TraceLine } from './trace.js';
+import { LIMITS } from './limits.js';
+import { parseTraceLine, readTrace, stepsOf, type AttemptTrace, type TraceLine } from './trace.js';
 
 const ORIGIN = 'http://app.test';
 const PAGE = 'page@1';
@@ -47,8 +48,11 @@ function lines(raw: readonly unknown[]): TraceLine[] {
   });
 }
 
-const trace = ({ runner = [], context }: { runner?: readonly unknown[]; context: readonly unknown[] }) =>
-  stepsOf({ runner: lines(runner), contexts: [lines(context)] });
+function trace({ runner = [], context }: { runner?: readonly unknown[]; context: readonly unknown[] }): AttemptTrace {
+  const result = stepsOf({ runner: lines(runner), contexts: [lines(context)] });
+  if (result.kind !== 'read') throw new Error(`rejected: ${JSON.stringify(result.why)}`);
+  return result.trace;
+}
 
 const gotoHome = [
   options(),
@@ -245,6 +249,46 @@ describe('stepsOf', () => {
   });
 });
 
+describe('stepsOf on hostile traces', () => {
+  it('walks 200k calls with 200k snapshots in linear time', () => {
+    const lines: TraceLine[] = [{ type: 'context-options', version: 10, baseURL: ORIGIN }];
+    for (let i = 0; i < 200_000; i++) {
+      const callId = `c@${i}`;
+      lines.push({ type: 'before', callId, parentId: null, method: i % 2 === 0 ? 'click' : 'expect', url: null, selector: null });
+      const path = `/p${Math.floor(i / 20)}`;
+      lines.push({ type: 'frame-snapshot', callId, phase: 'after', pageId: PAGE, isMainFrame: true, frameUrl: `${ORIGIN}${path}`, timestamp: i, target: null });
+    }
+    const started = performance.now();
+    const result = stepsOf({ runner: [], contexts: [lines] });
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(result).toMatchObject({ kind: 'read', trace: { steps: { length: 10_000 } } });
+  });
+
+  it('rejects a walk past the step budget, counting redirect hops', () => {
+    const lines: TraceLine[] = [{ type: 'before', callId: 'c@0', parentId: null, method: 'click', url: null, selector: null }];
+    for (let i = 0; i <= LIMITS.stepsPerAttempt; i++) {
+      lines.push({ type: 'frame-snapshot', callId: 'c@0', phase: 'after', pageId: PAGE, isMainFrame: true, frameUrl: `${ORIGIN}/r${i}`, timestamp: i, target: null });
+    }
+    expect(stepsOf({ runner: [], contexts: [lines] })).toEqual({
+      kind: 'rejected',
+      why: { kind: 'too-many-steps', count: LIMITS.stepsPerAttempt + 1 },
+    });
+  });
+
+  it('gives up on the anchor of a snapshot node with a million children instead of throwing', () => {
+    const html = ['HTML', {}, ...Array.from({ length: 1_000_000 }, () => 'x')];
+    expect(parseTraceLine(snapshot('c@1', 'action', '/', 1, { html }))).toMatchObject({ kind: 'line', line: { target: null } });
+  });
+
+  it('cleans selectors and target tags and ignores a call whose method is not a name', () => {
+    expect(parseTraceLine(before('c@1', 'click', { selector: 'a\u001b[2J\u0007b' }))).toMatchObject({ line: { selector: 'ab' } });
+    expect(parseTraceLine(before('c@1', 'click\u001b[2J\u0007'))).toEqual({ kind: 'unknown' });
+    expect(parseTraceLine(snapshot('c@1', 'action', '/', 1, { html: targetHtml('A\u001b[2J', { href: '/x' }) }))).toMatchObject({
+      line: { target: { tag: 'A', href: '/x' } },
+    });
+  });
+});
+
 describe('readTrace', () => {
   let dir: string;
   beforeEach(() => {
@@ -285,6 +329,13 @@ describe('readTrace', () => {
     expect(await traceZip({ 'test.trace': jsonl([options(), { type: 'after', callId: 'c@1' }, options()]) })).toEqual({
       kind: 'rejected',
       why: { kind: 'bad-trace-line', entry: 'test.trace', line: 2 },
+    });
+  });
+
+  it('rejects an entry with more lines than the cap before parsing it', async () => {
+    expect(await traceZip({ '1-trace.trace': '\n'.repeat(LIMITS.linesPerEntry) })).toEqual({
+      kind: 'rejected',
+      why: { kind: 'too-many-lines', entry: '1-trace.trace', count: LIMITS.linesPerEntry + 1 },
     });
   });
 

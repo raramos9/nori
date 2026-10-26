@@ -4,8 +4,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NoriError } from '../errors.js';
-import { cleanText, readReport } from './playwright-report.js';
-import { LIMITS } from './zip.js';
+import { cleanText, LIMITS } from './limits.js';
+import { readReport } from './playwright-report.js';
 
 const ARTIFACTS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'demo', 'e2e', 'artifacts');
 
@@ -100,6 +100,7 @@ describe('readReport', () => {
   it.each([
     ['not JSON', '{"suites": ['],
     ['a schema miss', report([{ title: 'a.spec.ts', specs: [{ title: 't' }] }])],
+    ['a trace path with control characters', report([{ title: 'a.spec.ts', specs: [spec('t', [result({ attachments: [{ name: 'trace', contentType: 'application/zip', path: 'x\u001b[2J.zip' }] })])] }])],
     ['a repeated case', report([{ title: 'a.spec.ts', specs: [spec('t', [result()]), spec('t', [result()])] }])],
     ['too many attempts', report([{ title: 'a.spec.ts', specs: [spec('t', Array.from({ length: LIMITS.attemptsPerCase + 1 }, (_, retry) => result({ retry })))] }])],
     [

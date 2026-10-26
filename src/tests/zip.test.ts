@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { TraceRejection } from '../graph/model.js';
 import { centralHeader, DEFLATED, localHeader, STORED, text, trace, zip, type Spec } from '../testing/zip-builder.js';
-import { copyUntrusted, LIMITS, readZip, type ZipRead } from './zip.js';
+import { LIMITS } from './limits.js';
+import { copyUntrusted, readZip, type ZipRead } from './zip.js';
 
 const ARTIFACTS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'demo', 'e2e', 'artifacts');
 const FIXTURE_ZIPS = ['home-to-docs', 'pricing-to-signup'].map((slug) => join(ARTIFACTS, 'traces', slug, 'trace.zip'));
@@ -51,7 +52,8 @@ describe('readZip on hostile archives', () => {
     ['an absolute name', () => zip([{ name: '/etc/passwd', data: text('x') }]), rejected({ kind: 'unsafe-name', entry: '/etc/passwd' })],
     ['a backslash name', () => zip([{ name: '..\\evil', data: text('x') }]), rejected({ kind: 'unsafe-name', entry: '..\\evil' })],
     ['a drive letter name', () => zip([{ name: 'C:/evil', data: text('x') }]), rejected({ kind: 'unsafe-name', entry: 'C:/evil' })],
-    ['a NUL in a name', () => zip([{ name: 'test.trace\u0000.png', data: text('x') }]), rejected({ kind: 'unsafe-name', entry: 'test.trace\u0000.png' })],
+    ['a NUL in a name', () => zip([{ name: 'test.trace\u0000.png', data: text('x') }]), rejected({ kind: 'unsafe-name', entry: 'test.trace.png' })],
+    ['an escape sequence in a name', () => zip([{ name: 'x\u001b[2J\u0007.trace', data: text('x') }]), rejected({ kind: 'unsafe-name', entry: 'x.trace' })],
     ['the encrypted bit', () => zip([{ ...trace(), flags: 0x0001 }]), rejected({ kind: 'encrypted' })],
     ['a ZIP64 size sentinel', () => zip([{ ...trace(), centralSizes: 0xffffffff }]), rejected({ kind: 'zip64' })],
     ['a ZIP64 end locator', () => zip([trace()], { zip64Locator: true }), rejected({ kind: 'zip64' })],
@@ -107,6 +109,15 @@ describe('readZip on hostile archives', () => {
     const { result, visited } = await read(zip([{ name: '1-trace.trace', data: text(data), descriptor: true }]));
     expect(result).toEqual({ kind: 'read' });
     expect(visited.map(({ name, bytes }) => [name, bytes.toString()])).toEqual([['1-trace.trace', data]]);
+  });
+
+  it('turns anything visit throws into a rejection of that entry', async () => {
+    const file = join(staging, 'trace.zip');
+    writeFileSync(file, zip([trace()]));
+    const visit = () => {
+      throw new RangeError('Maximum call stack size exceeded');
+    };
+    expect(await readZip({ file, select: () => true, visit })).toEqual(rejected({ kind: 'bad-trace-entry', entry: 'test.trace' }));
   });
 
   it('passes a rejection from visit through', async () => {

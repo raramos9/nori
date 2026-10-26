@@ -476,7 +476,10 @@ export type TraceRejection =
   | { readonly kind: 'no-trace-entries' }
   | { readonly kind: 'unsupported-trace-version'; readonly version: number }
   | { readonly kind: 'bad-trace-line'; readonly entry: string; readonly line: number }
+  | { readonly kind: 'too-many-lines'; readonly entry: string; readonly count: number }
+  | { readonly kind: 'too-many-calls'; readonly count: number }
   | { readonly kind: 'too-many-steps'; readonly count: number }
+  | { readonly kind: 'bad-trace-entry'; readonly entry: string }
   | { readonly kind: 'io-error'; readonly code: string };
 
 export type NavigateMethod = 'goto' | 'reload' | 'goBack' | 'goForward';
