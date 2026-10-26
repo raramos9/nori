@@ -2,6 +2,7 @@
 import { parseArgs } from 'node:util';
 import { errorCode, NoriError } from './errors.js';
 import type { Command } from './commands/command.js';
+import { diffCommand } from './commands/diff.js';
 import { exploreCommand } from './commands/explore.js';
 import { mcpCommand } from './commands/mcp.js';
 import { scanCommand } from './commands/scan.js';
@@ -10,6 +11,7 @@ import { readVersion } from './version.js';
 
 const COMMANDS: ReadonlyMap<string, Command> = new Map([
   ['scan', scanCommand],
+  ['diff', diffCommand],
   ['explore', exploreCommand],
   ['mcp', mcpCommand],
   ['verify', verifyCommand],
