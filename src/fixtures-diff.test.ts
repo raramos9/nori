@@ -4,34 +4,20 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { z } from 'zod';
 import { analyze, scan } from './commands/scan.js';
 import { comparable, diffBuilds, type BuildDiff } from './graph/diff.js';
 import type { BuildGraph } from './graph/model.js';
 import { demoHistory } from './testing/demo-history.js';
+import { addedOrRemovedEdges, addedOrRemovedScreens, expectedDiff, keys } from './testing/fixture-diff.js';
 import { pairKey, resolvedPairs } from './testing/resolved-pairs.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
 const CREATED_AT = new Date('2026-01-01T00:00:00Z');
 
-const edge = z.object({ from: z.string(), to: z.string() });
-const expectedSchema = z.object({
-  screens: z.object({ added: z.array(z.string()), removed: z.array(z.string()) }),
-  edges: z.object({ added: z.array(edge), removed: z.array(edge) }),
-});
-
-const keys = (edges: { from: string; to: string }[]) => edges.map(pairKey).sort();
-
 function diffOf(base: BuildGraph, head: BuildGraph): BuildDiff {
   const pair = comparable(base, head);
   if (pair.kind !== 'comparable') throw new Error(pair.kind);
   return diffBuilds(pair.pair);
-}
-
-function screens(diff: BuildDiff, kind: 'added' | 'removed'): string[] {
-  return diff.changes
-    .flatMap((change) => (change.kind === kind && change.subject.kind === 'screen' ? [change.subject.routePattern] : []))
-    .sort();
 }
 
 function graphPairs(graph: BuildGraph): Set<string> {
@@ -47,20 +33,8 @@ function graphPairs(graph: BuildGraph): Set<string> {
   return pairs;
 }
 
-function edges(diff: BuildDiff, kind: 'added' | 'removed', other: BuildGraph): string[] {
-  const otherPairs = graphPairs(other);
-  const pairs = diff.changes.flatMap((change) =>
-    change.kind === kind && change.subject.kind === 'transition' && change.subject.to.kind === 'route'
-      ? [pairKey({ from: change.subject.from, to: change.subject.to.pattern })]
-      : [],
-  );
-  return [...new Set(pairs)].filter((pair) => !otherPairs.has(pair)).sort();
-}
-
 describe('route-added-edge-removed fixture', () => {
-  const expected = expectedSchema.parse(
-    JSON.parse(readFileSync(join(FIXTURES, 'diffs', 'route-added-edge-removed', 'expected-diff.json'), 'utf8')),
-  );
+  const expected = expectedDiff('route-added-edge-removed');
   const history = demoHistory('route-added-edge-removed');
   const baseRoot = `${history.root}-base`;
   const originalHome = process.env.NORI_HOME;
@@ -92,14 +66,14 @@ describe('route-added-edge-removed fixture', () => {
 
   it('adds and removes exactly the planned screens', () => {
     const diff = diffOf(base, head);
-    expect(screens(diff, 'added')).toEqual(expected.screens.added);
-    expect(screens(diff, 'removed')).toEqual(expected.screens.removed);
+    expect(addedOrRemovedScreens(diff, 'added')).toEqual(expected.screens.added);
+    expect(addedOrRemovedScreens(diff, 'removed')).toEqual(expected.screens.removed);
   });
 
   it('adds and removes exactly the planned edges', () => {
     const diff = diffOf(base, head);
-    expect(edges(diff, 'added', base)).toEqual(keys(expected.edges.added));
-    expect(edges(diff, 'removed', head)).toEqual(keys(expected.edges.removed));
+    expect(addedOrRemovedEdges(diff, 'added', graphPairs(base))).toEqual(keys(expected.edges.added));
+    expect(addedOrRemovedEdges(diff, 'removed', graphPairs(head))).toEqual(keys(expected.edges.removed));
   });
 
   it('reports nothing but additions and removals, and no coverage gaps', () => {
