@@ -1,0 +1,232 @@
+{
+  "suites": [
+    {
+      "specs": [
+        {
+          "file": "home-to-docs.spec.ts",
+          "tests": [
+            {
+              "results": [
+                {
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "path": "traces/home-to-docs/error-context.md",
+                      "contentType": "text/markdown"
+                    },
+                    {
+                      "name": "trace",
+                      "path": "traces/home-to-docs/trace.zip",
+                      "contentType": "application/zip"
+                    }
+                  ],
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 3644,
+                  "error": {
+                    "message": "Error: docs index has no changelog guide\n\n\u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('link', { name: 'Changelog' })\nExpected: visible\nTimeout: 2000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - docs index has no changelog guide getByRole('link', { name: 'Changelog' }) with timeout 2000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('link', { name: 'Changelog' })\u001b[22m\n",
+                    "stack": "Error: docs index has no changelog guide\n\n\u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('link', { name: 'Changelog' })\nExpected: visible\nTimeout: 2000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - docs index has no changelog guide getByRole('link', { name: 'Changelog' }) with timeout 2000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('link', { name: 'Changelog' })\u001b[22m\n\n    at <root>/e2e/home-to-docs.spec.ts:7:100",
+                    "location": {
+                      "file": "<root>/e2e/home-to-docs.spec.ts",
+                      "column": 100,
+                      "line": 7
+                    },
+                    "snippet": "  5 |   await page.getByRole('navigation').getByRole('link', { name: 'Docs' }).click();\n  6 |   await expect(page).toHaveURL(/\\/docs$/);\n> 7 |   await expect(page.getByRole('link', { name: 'Changelog' }), 'docs index has no changelog guide').toBeVisible({ timeout: 2000 });\n    |                                                                                                    ^\n  8 | });\n  9 |"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "<root>/e2e/home-to-docs.spec.ts",
+                        "column": 100,
+                        "line": 7
+                      },
+                      "message": "Error: docs index has no changelog guide\n\n\u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('link', { name: 'Changelog' })\nExpected: visible\nTimeout: 2000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - docs index has no changelog guide getByRole('link', { name: 'Changelog' }) with timeout 2000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('link', { name: 'Changelog' })\u001b[22m\n\n\n  5 |   await page.getByRole('navigation').getByRole('link', { name: 'Docs' }).click();\n  6 |   await expect(page).toHaveURL(/\\/docs$/);\n> 7 |   await expect(page.getByRole('link', { name: 'Changelog' }), 'docs index has no changelog guide').toBeVisible({ timeout: 2000 });\n    |                                                                                                    ^\n  8 | });\n  9 |\n    at <root>/e2e/home-to-docs.spec.ts:7:100"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-26T00:21:12.853Z",
+                  "annotations": [],
+                  "errorLocation": {
+                    "file": "<root>/e2e/home-to-docs.spec.ts",
+                    "column": 100,
+                    "line": 7
+                  }
+                }
+              ],
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "status": "unexpected"
+            }
+          ],
+          "title": "home: Docs link lists a changelog guide",
+          "ok": false,
+          "tags": [],
+          "id": "3fefddf9854236729387-08c3ddfafffb27cdcd5c",
+          "line": 3,
+          "column": 5
+        }
+      ],
+      "title": "home-to-docs.spec.ts",
+      "file": "home-to-docs.spec.ts",
+      "column": 0,
+      "line": 0
+    },
+    {
+      "specs": [
+        {
+          "file": "pricing-to-signup.spec.ts",
+          "tests": [
+            {
+              "results": [
+                {
+                  "attachments": [
+                    {
+                      "name": "trace",
+                      "path": "traces/pricing-to-signup/trace.zip",
+                      "contentType": "application/zip"
+                    }
+                  ],
+                  "workerIndex": 1,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 1874,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-26T00:21:17.252Z",
+                  "annotations": []
+                }
+              ],
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "status": "expected"
+            }
+          ],
+          "title": "pricing: Get started opens the signup form",
+          "ok": true,
+          "tags": [],
+          "id": "8b2dde6afc7b86a74ce3-55419615be0349955cb4",
+          "line": 3,
+          "column": 5
+        }
+      ],
+      "title": "pricing-to-signup.spec.ts",
+      "file": "pricing-to-signup.spec.ts",
+      "column": 0,
+      "line": 0
+    }
+  ],
+  "config": {
+    "argv": [
+      "/usr/local/bin/node",
+      "<root>/node_modules/.bin/playwright",
+      "test",
+      "-c",
+      "e2e/playwright.config.ts"
+    ],
+    "configFile": "<root>/e2e/playwright.config.ts",
+    "rootDir": "<root>/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "<root>/e2e/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "<root>/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "*.spec.ts"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "filteredProjects": [
+      {
+        "grep": {},
+        "grepInvert": null,
+        "outputDir": "<root>/e2e/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "name": "",
+        "testDir": "<root>/e2e",
+        "snapshotDir": "<root>/e2e",
+        "testIgnore": [],
+        "testMatch": "*.spec.ts",
+        "timeout": 30000,
+        "use": {
+          "baseURL": "http://127.0.0.1:49403",
+          "channel": "chrome",
+          "screenshot": "off",
+          "trace": {
+            "mode": "on",
+            "snapshots": true,
+            "screenshots": false,
+            "sources": false
+          }
+        },
+        "dependencies": [],
+        "ignoreSnapshots": false,
+        "__projectId": ""
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "json",
+        {
+          "outputFile": "report.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "default",
+    "updateSourceMethod": "patch",
+    "version": "1.64.0",
+    "workers": 1,
+    "webServer": null
+  },
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-26T00:21:12.529Z",
+    "duration": 6957.938999999999,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}
