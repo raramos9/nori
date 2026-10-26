@@ -1,30 +1,30 @@
-import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readFile, rm } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { runId } from '../graph/ids.js';
 import { sourceHash } from '../graph/source-hash.js';
 import {
   parseOrigin,
   parsePageUrl,
-  type Build,
+  type Environment,
   type Origin,
   type PageUrl,
-  type Run,
-  type RunIngestion,
+  type RunId,
   type Session,
+  type Snapshot,
   type StepOutcome,
 } from '../graph/model.js';
 import { NoriError } from '../errors.js';
+import { inputsHash } from '../next/inputs.js';
 import { resolveUrl } from '../next/match.js';
 import { discoverProject } from '../next/project.js';
 import { crawlSite, type Budgets } from '../runtime/crawl.js';
 import { parseInteractions } from '../runtime/interactions.js';
-import { appHome, runDirectories, sealRunDirectory, stateDatabasePath } from '../runtime/layout.js';
-import { reconcileRun } from '../runtime/reconcile.js';
-import { GraphStore } from '../store/graph-store.js';
+import { runDirectory, stagingDirectory } from '../runtime/layout.js';
+import { validateCrawl } from '../runtime/reconcile.js';
+import { record, type RunOutcome } from '../runtime/record.js';
+import { sealRun, type SealedCrawlV1 } from '../runtime/sealed-run.js';
 import type { Command } from './command.js';
-import { analyze } from './scan.js';
+import { analyze, type Analyzed } from './scan.js';
 
 export type StorageStateInput = { readonly label: string; readonly file: string };
 
@@ -37,11 +37,17 @@ export type VerifyOptions = {
   readonly budgets: Budgets;
 };
 
-export type RunOutcome =
-  | { readonly kind: 'ingested'; readonly run: Run; readonly ingestion: RunIngestion }
-  | { readonly kind: 'source-changed'; readonly session: Session; readonly before: string; readonly after: string };
+export type SourceChanged = {
+  readonly kind: 'source-changed';
+  readonly session: Session;
+  readonly changed: 'sources' | 'inputs';
+  readonly before: string;
+  readonly after: string;
+};
 
-export type VerifyReport = { readonly build: Build; readonly runs: readonly RunOutcome[] };
+export type VerifyOutcome = RunOutcome | SourceChanged;
+
+export type VerifyReport = { readonly snapshot: Snapshot; readonly runs: readonly VerifyOutcome[] };
 
 export const DEFAULT_BUDGETS: Budgets = { maxCaptures: 200, maxNavigations: 1000, maxMillis: 5 * 60_000 };
 
@@ -85,6 +91,38 @@ function plannedSessions({ anonymous, storageStates }: Pick<VerifyOptions, 'anon
   ];
 }
 
+export function currentEnvironment(env: NodeJS.ProcessEnv): Environment {
+  return env.CI === 'true' ? 'ci' : 'local';
+}
+
+async function sourceChange(analyzed: Analyzed, session: Session, path: string): Promise<SourceChanged | null> {
+  const { snapshot, analysis } = analyzed.ingestion;
+  const after = sourceHash({ files: (await discoverProject({ path })).files });
+  if (after !== snapshot.sourceHash) {
+    return { kind: 'source-changed', session, changed: 'sources', before: snapshot.sourceHash, after };
+  }
+  const inputsAfter = await inputsHash(analyzed.inputs);
+  if (inputsAfter !== analysis.inputsHash) {
+    return { kind: 'source-changed', session, changed: 'inputs', before: analysis.inputsHash, after: inputsAfter };
+  }
+  return null;
+}
+
+export function outcomeRunId(outcome: RunOutcome): RunId {
+  switch (outcome.kind) {
+    case 'matched-now':
+      return outcome.ingestion.run.id;
+    case 'already-matched':
+      return outcome.run.id;
+    case 'failed':
+      return outcome.runId;
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
 export async function verify(options: VerifyOptions): Promise<VerifyReport> {
   const origin = parseVerifyOrigin(options.url);
   const sessions = plannedSessions(options);
@@ -97,52 +135,58 @@ export async function verify(options: VerifyOptions): Promise<VerifyReport> {
           throw new NoriError(`cannot read --interactions ${options.interactionsFile}`);
         }));
 
-  const analysis = await analyze({ path: options.path, createdAt: new Date() });
-  const { ingestion } = analysis;
-  const { build, application } = ingestion;
+  const analyzed = await analyze({ path: options.path, createdAt: new Date() });
+  const { ingestion } = analyzed;
+  const { application, snapshot, analysis } = ingestion;
+  const environment = currentEnvironment(process.env);
   const seeds: PageUrl[] = [
     ...new Set(['/', ...ingestion.screens.map(({ routePattern }) => routePattern as string).filter((pattern) => !pattern.includes('['))]),
   ].map((pattern) => parsePageUrl(origin, pattern));
   const screenKey = (url: PageUrl): string => {
-    const resolution = resolveUrl({ matcher: analysis.matcher, url });
+    const resolution = resolveUrl({ matcher: analyzed.matcher, url });
     return resolution.kind === 'screen' ? resolution.pattern : url;
   };
 
-  const databasePath = stateDatabasePath(application.id);
-  await mkdir(dirname(databasePath), { recursive: true, mode: 0o700 });
-  const store = await GraphStore.open({ path: databasePath });
-  try {
-    await store.ingestStatic(ingestion);
-    const runs: RunOutcome[] = [];
-    for (const { session, storageStatePath } of sessions) {
-      const pending = join(appHome(application.id), 'runs', `${randomUUID()}.partial`);
-      const crawl = await crawlSite({ origin, session, storageStatePath, seeds, interactions, budgets: options.budgets, dir: pending, screenKey }).catch(
-        async (error: unknown) => {
-          await rm(pending, { recursive: true, force: true });
-          throw error;
-        },
-      );
-      const project = await discoverProject({ path: options.path });
-      const after = sourceHash({ files: project.files });
-      if (after !== build.sourceHash) {
-        await rm(pending, { recursive: true, force: true });
-        runs.push({ kind: 'source-changed', session, before: build.sourceHash, after });
-        continue;
-      }
-      const directories = runDirectories(
-        application.id,
-        runId({ buildId: build.id, origin, session, startedAt: crawl.startedAt }),
-      );
-      const result = reconcileRun({ staticSide: analysis, crawl, runDirectory: directories.sealed });
-      await writeFile(join(pending, 'reconcile.json'), `${JSON.stringify(result.report, null, 2)}\n`);
-      await sealRunDirectory({ staging: pending, sealed: directories.sealed });
-      await store.ingestRun(result);
-      runs.push({ kind: 'ingested', run: result.run, ingestion: result });
+  const planned: (SourceChanged | RunId)[] = [];
+  for (const { session, storageStatePath } of sessions) {
+    const staging = stagingDirectory(application.id);
+    const discard = () => rm(staging, { recursive: true, force: true });
+    const crawl = await crawlSite({ origin, session, storageStatePath, seeds, interactions, budgets: options.budgets, dir: staging, screenKey }).catch(
+      async (error: unknown) => {
+        await discard();
+        throw error;
+      },
+    );
+    const changed = await sourceChange(analyzed, session, options.path);
+    if (changed !== null) {
+      await discard();
+      planned.push(changed);
+      continue;
     }
-    return { build, runs };
-  } finally {
-    await store.close();
+    const sealed: SealedCrawlV1 = { format: 1, snapshotId: snapshot.id, environment, seededBy: analysis.analyzerVersion, crawl };
+    const id = runId({ snapshotId: snapshot.id, origin, session, startedAt: crawl.startedAt });
+    const directory = runDirectory(application.id, snapshot.id, id);
+    try {
+      validateCrawl(sealed, directory);
+    } catch (error) {
+      await discard();
+      throw error;
+    }
+    await sealRun({ staging, sealed: directory, crawl: sealed });
+    planned.push(id);
   }
+
+  const { runs } = await record(analyzed);
+  const byRun = new Map(runs.map((outcome) => [outcomeRunId(outcome), outcome]));
+  return {
+    snapshot,
+    runs: planned.map((entry) => {
+      if (typeof entry !== 'string') return entry;
+      const outcome = byRun.get(entry);
+      if (outcome === undefined) throw new Error(`Run ${entry} was sealed but not recorded`);
+      return outcome;
+    }),
+  };
 }
 
 export type OutcomeCounts = Readonly<Record<StepOutcome['kind'], number>>;
@@ -157,24 +201,34 @@ function sessionLabel(session: Session): string {
   return session.kind === 'anonymous' ? 'anonymous' : session.label;
 }
 
-export function formatVerify({ build, runs }: VerifyReport): string {
-  const lines = [`build ${build.commitSha.slice(0, 7)}, sources ${build.sourceHash.slice(0, 8)}`];
-  for (const outcome of runs) {
-    if (outcome.kind === 'source-changed') {
-      lines.push(
-        `${sessionLabel(outcome.session)}: sources changed during the crawl (${outcome.before.slice(0, 8)} -> ${outcome.after.slice(0, 8)}), run not ingested`,
-      );
-      continue;
-    }
-    const { run, ingestion } = outcome;
-    const counts = countOutcomes(ingestion.report);
-    lines.push(
-      `${sessionLabel(run.session)}: ${run.id} stopped on ${run.stop}, ${ingestion.captures.length} captures, ${ingestion.navigations.length} navigations, ` +
+function formatOutcome(outcome: VerifyOutcome): string {
+  switch (outcome.kind) {
+    case 'source-changed':
+      return `${sessionLabel(outcome.session)}: ${outcome.changed} changed during the crawl (${outcome.before.slice(0, 8)} -> ${outcome.after.slice(0, 8)}), run not ingested`;
+    case 'matched-now': {
+      const { run, report, captures, navigations } = outcome.ingestion;
+      const counts = countOutcomes(report);
+      return (
+        `${sessionLabel(run.session)}: ${run.id} stopped on ${run.stop}, ${captures.length} captures, ${navigations.length} navigations, ` +
         `${counts.supports} supports, ${counts.contradicts} contradicts, ${counts.created} created, ${counts.ignored} ignored, ` +
-        `requests ${run.requests.allowed} allowed ${run.requests.blocked} blocked`,
-    );
+        `requests ${run.requests.allowed} allowed ${run.requests.blocked} blocked`
+      );
+    }
+    case 'already-matched': {
+      const { run } = outcome;
+      return `${sessionLabel(run.session)}: ${run.id} stopped on ${run.stop}, matched by another nori process, requests ${run.requests.allowed} allowed ${run.requests.blocked} blocked`;
+    }
+    case 'failed':
+      return `${outcome.runId}: sealed but not matched: ${outcome.reason}`;
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
   }
-  return lines.join('\n');
+}
+
+export function formatVerify({ snapshot, runs }: VerifyReport): string {
+  return [`build ${snapshot.commitSha.slice(0, 7)}, sources ${snapshot.sourceHash.slice(0, 8)}`, ...runs.map(formatOutcome)].join('\n');
 }
 
 export const verifyCommand: Command = {
@@ -220,6 +274,6 @@ export const verifyCommand: Command = {
       },
     });
     process.stdout.write(`${formatVerify(report)}\n`);
-    return report.runs.some(({ kind }) => kind === 'source-changed') ? 1 : 0;
+    return report.runs.some(({ kind }) => kind === 'source-changed' || kind === 'failed') ? 1 : 0;
   },
 };

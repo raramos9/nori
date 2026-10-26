@@ -1,16 +1,16 @@
 import { createHash } from 'node:crypto';
 import {
+  parseAnalysisId,
   parseAppKey,
-  parseApplicationId,
   parseRunId,
-  parseBuildId,
+  parseSnapshotId,
   parseEvidenceId,
   parseScreenId,
   parseStateId,
   parseTransitionId,
+  type AnalysisId,
+  type AnalyzerVersion,
   type AppKey,
-  type ApplicationId,
-  type BuildId,
   type CommitSha,
   type EvidenceId,
   type EvidenceIdentity,
@@ -18,6 +18,7 @@ import {
   type Origin,
   type RunId,
   type Session,
+  type SnapshotId,
   type RoutePattern,
   type ScreenId,
   type StateId,
@@ -35,30 +36,24 @@ function derive(prefix: string, parts: readonly Part[]): string {
   return `${prefix}_${digest.slice(0, 16)}`;
 }
 
-export function applicationId({ rootPath }: { rootPath: string }): ApplicationId {
-  return parseApplicationId(derive('app', [rootPath]));
-}
-
 export function appKey({ repoIdentity, subpath }: { repoIdentity: string; subpath: string }): AppKey {
   return parseAppKey(derive('app', ['app-key/1', repoIdentity, subpath]));
 }
 
-export function buildId(args: {
-  applicationId: ApplicationId;
-  commitSha: CommitSha;
-  sourceHash: string;
-  analyzerVersion: string;
-}): BuildId {
-  return parseBuildId(
-    derive('bld', [args.applicationId, args.commitSha, args.sourceHash, args.analyzerVersion]),
-  );
+export function snapshotId(args: { appKey: AppKey; commitSha: CommitSha; sourceHash: string }): SnapshotId {
+  return parseSnapshotId(derive('snp', [args.appKey, args.commitSha, args.sourceHash]));
 }
 
-export function screenId(args: {
-  applicationId: ApplicationId;
-  routePattern: RoutePattern;
-}): ScreenId {
-  return parseScreenId(derive('scr', [args.applicationId, args.routePattern]));
+export function analysisId(args: {
+  snapshotId: SnapshotId;
+  analyzerVersion: AnalyzerVersion;
+  inputsHash: string;
+}): AnalysisId {
+  return parseAnalysisId(derive('ana', [args.snapshotId, args.analyzerVersion, args.inputsHash]));
+}
+
+export function screenId(args: { appKey: AppKey; routePattern: RoutePattern }): ScreenId {
+  return parseScreenId(derive('scr', [args.appKey, args.routePattern]));
 }
 
 export function stateId({ screenId, key }: { screenId: ScreenId; key: string }): StateId {
@@ -101,9 +96,9 @@ function sessionKey(session: Session): string {
   }
 }
 
-export function runId(args: { buildId: BuildId; origin: Origin; session: Session; startedAt: Date }): RunId {
+export function runId(args: { snapshotId: SnapshotId; origin: Origin; session: Session; startedAt: Date }): RunId {
   return parseRunId(
-    derive('run', [args.buildId, args.origin, sessionKey(args.session), args.startedAt.toISOString()]),
+    derive('run', [args.snapshotId, args.origin, sessionKey(args.session), args.startedAt.toISOString()]),
   );
 }
 
@@ -139,7 +134,7 @@ function evidenceIdentityParts(identity: EvidenceIdentity): readonly Part[] {
     case 'static': {
       const { file, start, end } = identity.span;
       return [
-        identity.buildId,
+        identity.analysisId,
         identity.kind,
         file,
         start.line,
@@ -150,9 +145,9 @@ function evidenceIdentityParts(identity: EvidenceIdentity): readonly Part[] {
       ];
     }
     case 'capture':
-      return [identity.buildId, identity.kind, identity.runId, identity.url];
+      return [identity.runId, identity.kind, identity.url];
     case 'navigation':
-      return [identity.buildId, identity.kind, identity.runId, startKey(identity.start), identity.requested];
+      return [identity.runId, identity.kind, startKey(identity.start), identity.requested];
     default: {
       const _exhaustive: never = identity;
       return _exhaustive;

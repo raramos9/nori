@@ -24,7 +24,7 @@ async function analyzeSnapshot({ path }: { path: string }): Promise<Snapshot> {
   const { root, graph } = await exploreGraph({ path });
   return createSnapshot({
     graph: toExplorerGraph({ root, graph }),
-    key: { commitSha: graph.build.commitSha, sourceHash: graph.build.sourceHash },
+    key: { commitSha: graph.snapshot.commitSha, sourceHash: graph.snapshot.sourceHash },
   });
 }
 

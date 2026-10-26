@@ -3,11 +3,20 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { applicationId, buildId, evidenceId, screenId } from '../graph/ids.js';
-import { parseCommitSha, parseRoutePattern, type Build, type StaticIngestion } from '../graph/model.js';
-import { GraphStore } from '../store/graph-store.js';
+import { analysisId, evidenceId, screenId, snapshotId } from '../graph/ids.js';
+import {
+  parseAnalyzerVersion,
+  parseCommitSha,
+  parseRoutePattern,
+  type Analysis,
+  type Application,
+  type Snapshot,
+} from '../graph/model.js';
+import { createMatcher } from '../next/match.js';
+import { discoverRoutes } from '../next/routes.js';
+import { readAppIdentity } from '../repo/app-identity.js';
+import { record } from '../runtime/record.js';
 import { exploreGraph } from './explore.js';
-import { stateDatabasePath } from '../runtime/layout.js';
 
 const tempDirs: string[] = [];
 
@@ -36,42 +45,50 @@ function fixture(): string {
 }
 
 async function forgeDatabase(root: string): Promise<void> {
-  const application = { id: applicationId({ rootPath: root }), rootPath: root, framework: 'next-app-router' } as const;
+  const identity = await readAppIdentity({ root });
+  const application: Application = { id: identity.appKey, ...identity, framework: 'next-app-router' };
   const commitSha = parseCommitSha('f'.repeat(40));
-  const build: Build = {
-    id: buildId({ applicationId: application.id, commitSha, sourceHash: 'forged', analyzerVersion: 'forged' }),
-    applicationId: application.id,
+  const createdAt = new Date('2999-01-01T00:00:00.000Z');
+  const snapshot: Snapshot = {
+    id: snapshotId({ appKey: application.id, commitSha, sourceHash: 'forged' }),
+    appKey: application.id,
     commitSha,
     sourceHash: 'forged',
+    worktree: 'clean',
     branch: 'main',
-    analyzerVersion: 'forged',
-    createdAt: new Date('2999-01-01T00:00:00.000Z'),
+    createdAt,
+  };
+  const analyzerVersion = parseAnalyzerVersion('forged');
+  const analysis: Analysis = {
+    id: analysisId({ snapshotId: snapshot.id, analyzerVersion, inputsHash: 'forged' }),
+    snapshotId: snapshot.id,
+    analyzerVersion,
+    inputsHash: 'forged',
+    createdAt,
   };
   const routePattern = parseRoutePattern('/forged');
-  const screen = { id: screenId({ applicationId: application.id, routePattern }), applicationId: application.id, routePattern };
-  const identity = {
+  const screen = { id: screenId({ appKey: application.id, routePattern }), appKey: application.id, routePattern };
+  const evidenceIdentity = {
     kind: 'static',
-    buildId: build.id,
+    analysisId: analysis.id,
     span: { file: 'app/forged/page.tsx', start: { line: 1, column: 1 }, end: { line: 1, column: 1 } },
     extractor: 'forged',
   } as const;
-  const evidence = { ...identity, id: evidenceId(identity) };
-  const ingestion: StaticIngestion = {
-    application,
-    build,
-    screens: [screen],
-    transitions: [],
-    evidence: [evidence],
-    observations: [{ evidenceId: evidence.id, subject: { kind: 'screen', id: screen.id }, verdict: 'supports' }],
-  };
-  const path = stateDatabasePath(application.id);
-  mkdirSync(dirname(path), { recursive: true });
-  const store = await GraphStore.open({ path });
-  try {
-    await store.ingestStatic(ingestion);
-  } finally {
-    await store.close();
-  }
+  const evidence = { ...evidenceIdentity, id: evidenceId(evidenceIdentity) };
+  const files = ['app/forged/page.tsx'];
+  await record({
+    ingestion: {
+      application,
+      snapshot,
+      analysis,
+      screens: [screen],
+      transitions: [],
+      evidence: [evidence],
+      observations: [{ evidenceId: evidence.id, subject: { kind: 'screen', id: screen.id }, verdict: 'supports' }],
+    },
+    matcher: createMatcher({ table: discoverRoutes({ files, appDir: 'app' }), files, adapters: false }),
+    passThrough: new Set(),
+  });
 }
 
 describe('exploreGraph', () => {
@@ -82,7 +99,7 @@ describe('exploreGraph', () => {
     const { graph } = await exploreGraph({ path: root });
 
     expect(graph.screens.map(({ screen }) => screen.routePattern).sort()).toEqual(['/', '/about']);
-    expect(graph.build.analyzerVersion).not.toBe('forged');
-    expect(graph.build.commitSha).not.toBe('f'.repeat(40));
+    expect(graph.analysis.analyzerVersion).not.toBe('forged');
+    expect(graph.snapshot.commitSha).not.toBe('f'.repeat(40));
   });
 });

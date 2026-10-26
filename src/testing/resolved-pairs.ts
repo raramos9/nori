@@ -6,7 +6,7 @@ export const pairKey = ({ from, to }: { from: string; to: string }) => `${from} 
 export function patternsByState({ application, screens }: StaticIngestion): Map<StateId, string> {
   return new Map(
     screens.map((screen) => [
-      stateId({ screenId: screenId({ applicationId: application.id, routePattern: screen.routePattern }), key: DEFAULT_STATE_KEY }),
+      stateId({ screenId: screenId({ appKey: application.id, routePattern: screen.routePattern }), key: DEFAULT_STATE_KEY }),
       screen.routePattern,
     ]),
   );

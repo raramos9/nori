@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { errorCode, NoriError } from '../errors.js';
 import { appKey } from '../graph/ids.js';
-import type { AppKey } from '../graph/model.js';
+import type { AppKey, RepoIdentity } from '../graph/model.js';
 import { gitCommonDir, originUrl, showPrefix, workTreeTop } from './git.js';
 
 export type NetworkRemote = { readonly kind: 'network'; readonly hostPath: string };
@@ -11,7 +11,7 @@ export type LocalRemote = { readonly kind: 'local'; readonly path: string };
 
 export type AppIdentity = {
   readonly appKey: AppKey;
-  readonly repoIdentity: string;
+  readonly repoIdentity: RepoIdentity;
   readonly subpath: string;
 };
 
@@ -69,7 +69,7 @@ async function realpathOrResolve(path: string): Promise<string> {
   }
 }
 
-async function commonDirIdentity({ root }: { root: string }): Promise<string | null> {
+async function commonDirIdentity({ root }: { root: string }): Promise<RepoIdentity | null> {
   const commonDir = await gitCommonDir({ root });
   if (commonDir === null) return null;
   const real = await realpathOrResolve(commonDir);
@@ -85,7 +85,7 @@ async function isDirectory(path: string): Promise<boolean> {
 }
 
 // One hop only: the source repository's own local origin is never followed.
-async function sourceIdentity({ path }: { path: string }): Promise<string> {
+async function sourceIdentity({ path }: { path: string }): Promise<RepoIdentity> {
   if (await isDirectory(path)) {
     const origin = await originUrl({ root: path });
     const remote = origin === null ? null : normalizeRemote(origin);
@@ -96,7 +96,7 @@ async function sourceIdentity({ path }: { path: string }): Promise<string> {
   return `local:${await realpathOrResolve(path)}`;
 }
 
-async function readRepoIdentity({ root, top }: { root: string; top: string }): Promise<string> {
+async function readRepoIdentity({ root, top }: { root: string; top: string }): Promise<RepoIdentity> {
   const origin = await originUrl({ root });
   const remote = origin === null ? null : normalizeRemote(origin);
   if (remote?.kind === 'network') return `remote:${remote.hostPath}`;

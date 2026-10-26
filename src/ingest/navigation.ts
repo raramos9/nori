@@ -1,9 +1,10 @@
 import { join } from 'node:path';
+import type ts from 'typescript6';
 import { evidenceId, screenId, stateId, transitionId } from '../graph/ids.js';
 import {
   DEFAULT_STATE_KEY,
+  type Analysis,
   type Application,
-  type Build,
   type StaticEvidence,
   type Observation,
   type RoutePattern,
@@ -17,7 +18,7 @@ import type { SourceFile } from '../graph/source-hash.js';
 import { createEvaluator, type Evaluated } from '../next/evaluate.js';
 import { createMatcher, resolveTemplate, type Matcher, type MatchRoute, type Resolution } from '../next/match.js';
 import { findNavCalls, NAV_EXTRACTOR, type NavCall } from '../next/nav-calls.js';
-import { createProgram, isProgramFile } from '../next/program.js';
+import { isProgramFile } from '../next/program.js';
 import { screenReach } from '../next/reach.js';
 import { redirectOnlyPages } from '../next/redirect-pages.js';
 import type { RouteTable } from '../next/routes.js';
@@ -134,20 +135,21 @@ function expressionText(call: NavCall): string {
 
 export function navigationIngestion({
   application,
-  build,
+  analysis,
+  program,
   root,
   files,
   table,
   adapters,
 }: {
   application: Application;
-  build: Build;
+  analysis: Analysis;
+  program: ts.Program;
   root: string;
   files: readonly SourceFile[];
   table: RouteTable;
   adapters: boolean;
 }): NavigationIngestion {
-  const program = createProgram({ root, files });
   const evaluate = createEvaluator(program, { adapters });
   const paths = files.map((file) => file.path);
   const matcher = createMatcher({ table, files: paths, adapters });
@@ -158,7 +160,7 @@ export function navigationIngestion({
     if (route.route.kind === 'page' && !pages.has(route.route.pattern)) pages.set(route.route.pattern, route);
   }
   const stateOf = (pattern: RoutePattern): StateId =>
-    stateId({ screenId: screenId({ applicationId: application.id, routePattern: pattern }), key: DEFAULT_STATE_KEY });
+    stateId({ screenId: screenId({ appKey: application.id, routePattern: pattern }), key: DEFAULT_STATE_KEY });
 
   const outcomes: CallOutcome[] = [];
   const sourced: SourcedCall[] = [];
@@ -206,7 +208,7 @@ export function navigationIngestion({
     }
     if (backed.size === 0) continue;
 
-    const identity = { kind: 'static', buildId: build.id, span: call.span, extractor: NAV_EXTRACTOR } as const;
+    const identity = { kind: 'static', analysisId: analysis.id, span: call.span, extractor: NAV_EXTRACTOR } as const;
     const callEvidence: StaticEvidence = { ...identity, id: evidenceId(identity) };
     evidence.push(callEvidence);
     for (const id of backed) {

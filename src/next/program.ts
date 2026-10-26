@@ -49,13 +49,21 @@ function memoryFiles({ root, files }: { root: string; files: readonly SourceFile
   };
 }
 
-function compilerOptions({ root, memory }: { root: string; memory: MemoryFiles }): ts.CompilerOptions {
+function compilerOptions({
+  root,
+  memory,
+  readDisk,
+}: {
+  root: string;
+  memory: MemoryFiles;
+  readDisk: (path: string) => string | undefined;
+}): ts.CompilerOptions {
   const configPath = join(root, 'tsconfig.json');
   const host: ts.ParseConfigHost = {
     useCaseSensitiveFileNames: ts.sys.useCaseSensitiveFileNames,
     readDirectory: () => [],
     fileExists: (path) => memory.has(path) || ts.sys.fileExists(path),
-    readFile: (path) => memory.text(path) ?? ts.sys.readFile(path),
+    readFile: (path) => memory.text(path) ?? readDisk(path),
   };
   const text = host.readFile(configPath);
   let options = BASE_OPTIONS;
@@ -78,22 +86,39 @@ function compilerOptions({ root, memory }: { root: string; memory: MemoryFiles }
 const libFiles = new Map<string, ts.SourceFile>();
 
 // Tracked files come from memory so analysis sees exactly the content the source hash covers.
-export function createProgram({ root, files }: { root: string; files: readonly SourceFile[] }): ts.Program {
+export function createProgram({
+  root,
+  files,
+  onDiskRead = () => undefined,
+}: {
+  root: string;
+  files: readonly SourceFile[];
+  onDiskRead?: (path: string) => void;
+}): ts.Program {
   const memory = memoryFiles({ root, files });
-  const options = compilerOptions({ root, memory });
+  const readDisk = (path: string): string | undefined => {
+    const text = ts.sys.readFile(path);
+    if (text !== undefined) onDiskRead(path);
+    return text;
+  };
+  const options = compilerOptions({ root, memory, readDisk });
   const base = ts.createCompilerHost(options, true);
   const libDir = dirname(ts.getDefaultLibFilePath(options));
   const host: ts.CompilerHost = {
     ...base,
     getCurrentDirectory: () => root,
     fileExists: (path) => memory.has(path) || base.fileExists(path),
-    readFile: (path) => memory.text(path) ?? base.readFile(path),
+    readFile: (path) => memory.text(path) ?? readDisk(path),
     directoryExists: (path) => memory.hasDirectory(path) || (base.directoryExists?.(path) ?? false),
     realpath: (path) => (memory.has(path) ? path : (base.realpath?.(path) ?? path)),
     getSourceFile(fileName, languageVersion, onError, shouldCreate) {
       const text = memory.text(fileName);
       if (text !== undefined) return ts.createSourceFile(fileName, text, languageVersion, true);
-      if (dirname(fileName) !== libDir) return base.getSourceFile(fileName, languageVersion, onError, shouldCreate);
+      if (dirname(fileName) !== libDir) {
+        const sourceFile = base.getSourceFile(fileName, languageVersion, onError, shouldCreate);
+        if (sourceFile !== undefined) onDiskRead(fileName);
+        return sourceFile;
+      }
       const key = `${fileName}\0${JSON.stringify(languageVersion)}`;
       let lib = libFiles.get(key);
       if (lib === undefined) {

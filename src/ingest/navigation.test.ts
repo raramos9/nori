@@ -1,38 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { applicationId, buildId, screenId, stateId } from '../graph/ids.js';
-import {
-  DEFAULT_STATE_KEY,
-  parseCommitSha,
-  parseRoutePattern,
-  type Application,
-  type Build,
-  type StateId,
-} from '../graph/model.js';
+import { screenId, stateId } from '../graph/ids.js';
+import { DEFAULT_STATE_KEY, parseRoutePattern, type StateId } from '../graph/model.js';
+import { createProgram } from '../next/program.js';
 import { discoverRoutes } from '../next/routes.js';
+import { TEST_APP as application, testAnalysis, testSnapshot } from '../testing/identity.js';
 import { MEMORY_ROOT, memoryFiles } from '../testing/memory-project.js';
 import { navigationIngestion } from './navigation.js';
 
-const application: Application = {
-  id: applicationId({ rootPath: MEMORY_ROOT }),
-  rootPath: MEMORY_ROOT,
-  framework: 'next-app-router',
-};
-const commitSha = parseCommitSha('a'.repeat(40));
-const build: Build = {
-  id: buildId({ applicationId: application.id, commitSha, sourceHash: 'h', analyzerVersion: '1' }),
-  applicationId: application.id,
-  commitSha,
-  sourceHash: 'h',
-  branch: 'main',
-  analyzerVersion: '1',
-  createdAt: new Date('2026-01-01T00:00:00.000Z'),
-};
+const analysis = testAnalysis(testSnapshot());
 
 const patternOf = new Map<StateId, string>();
 
 function state(pattern: string): StateId {
   const id = stateId({
-    screenId: screenId({ applicationId: application.id, routePattern: parseRoutePattern(pattern) }),
+    screenId: screenId({ appKey: application.id, routePattern: parseRoutePattern(pattern) }),
     key: DEFAULT_STATE_KEY,
   });
   patternOf.set(id, pattern);
@@ -43,7 +24,8 @@ function ingest(files: Readonly<Record<string, string>>, adapters = true) {
   const sources = memoryFiles(files);
   const table = discoverRoutes({ files: sources.map((file) => file.path), appDir: 'app' });
   for (const route of table.routes) state(route.pattern);
-  return navigationIngestion({ application, build, root: MEMORY_ROOT, files: sources, table, adapters });
+  const program = createProgram({ root: MEMORY_ROOT, files: sources });
+  return navigationIngestion({ application, analysis, program, root: MEMORY_ROOT, files: sources, table, adapters });
 }
 
 function edges(files: Readonly<Record<string, string>>): readonly string[] {

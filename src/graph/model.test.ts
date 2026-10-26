@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applicationId, buildId, evidenceId, runId } from './ids.js';
+import { evidenceId, runId } from './ids.js';
+import { testAnalysis, testSnapshot } from '../testing/identity.js';
 import {
   parseOrigin,
   parsePageUrl,
@@ -29,20 +30,15 @@ describe('brand parsers', () => {
 });
 
 describe('deriveEvidenceStatus', () => {
-  const app = applicationId({ rootPath: '/r' });
-  const build = buildId({
-    applicationId: app,
-    commitSha: parseCommitSha('a'.repeat(40)),
-    sourceHash: 'c'.repeat(64),
-    analyzerVersion: '1',
-  });
+  const snapshot = testSnapshot();
+  const analysis = testAnalysis(snapshot);
   const span = { file: 'a.tsx', start: { line: 1, column: 0 }, end: { line: 1, column: 1 } };
-  const staticIdentity = { kind: 'static', buildId: build, span, extractor: 'x' } as const;
+  const staticIdentity = { kind: 'static', analysisId: analysis.id, span, extractor: 'x' } as const;
   const staticEvidence = { ...staticIdentity, id: evidenceId(staticIdentity) };
   const origin = parseOrigin('http://localhost:3000');
   const url = parsePageUrl(origin, '/settings');
-  const run = runId({ buildId: build, origin, session: { kind: 'anonymous' }, startedAt: new Date(0) });
-  const captureIdentity = { kind: 'capture', buildId: build, runId: run, url } as const;
+  const run = runId({ snapshotId: snapshot.id, origin, session: { kind: 'anonymous' }, startedAt: new Date(0) });
+  const captureIdentity = { kind: 'capture', runId: run, url } as const;
   const capture = (httpStatus: number) => ({
     ...captureIdentity,
     id: evidenceId(captureIdentity),

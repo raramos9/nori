@@ -1,7 +1,7 @@
 import { evidenceId, screenId } from '../graph/ids.js';
 import type {
+  Analysis,
   Application,
-  Build,
   StaticEvidence,
   Observation,
   RoutePattern,
@@ -16,13 +16,13 @@ const FILE_START = { line: 1, column: 1 } as const;
 
 export function screensIngestion({
   application,
-  build,
+  analysis,
   table,
 }: {
   application: Application;
-  build: Build;
+  analysis: Analysis;
   table: RouteTable;
-}): StaticIngestion {
+}): Pick<StaticIngestion, 'screens' | 'evidence' | 'observations'> {
   const screens = new Map<RoutePattern, Screen>();
   const evidence: StaticEvidence[] = [];
   const observations: Observation[] = [];
@@ -32,15 +32,15 @@ export function screensIngestion({
     let screen = screens.get(route.pattern);
     if (screen === undefined) {
       screen = {
-        id: screenId({ applicationId: application.id, routePattern: route.pattern }),
-        applicationId: application.id,
+        id: screenId({ appKey: application.id, routePattern: route.pattern }),
+        appKey: application.id,
         routePattern: route.pattern,
       };
       screens.set(route.pattern, screen);
     }
     const identity = {
       kind: 'static',
-      buildId: build.id,
+      analysisId: analysis.id,
       span: { file: route.file, start: FILE_START, end: FILE_START },
       extractor: PAGE_FILE_EXTRACTOR,
     } as const;
@@ -53,5 +53,5 @@ export function screensIngestion({
     });
   }
 
-  return { application, build, screens: [...screens.values()], transitions: [], evidence, observations };
+  return { screens: [...screens.values()], evidence, observations };
 }

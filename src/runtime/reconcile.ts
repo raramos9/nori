@@ -24,12 +24,10 @@ import {
   type Trigger,
 } from '../graph/model.js';
 import { resolveUrl, type Matcher, type UrlResolution } from '../next/match.js';
-import type { CaptureKey, CrawlResult, Redirect, RuntimeAction } from './crawl-result.js';
+import type { CaptureKey, Redirect, RuntimeAction } from './crawl-result.js';
 import { artifactPath } from './layout.js';
+import type { SealedCrawlV1 } from './sealed-run.js';
 
-export const RECONCILER_VERSION = '1';
-
-// This build's own analysis, never the loaded graph: an earlier run must not change what a later one matches.
 export type StaticSide = {
   readonly ingestion: StaticIngestion;
   readonly matcher: Matcher;
@@ -64,7 +62,7 @@ type ParsedNavigation = {
     | { readonly kind: 'aborted'; readonly error: string };
 };
 
-type ParsedCrawl = {
+export type ValidatedRun = {
   readonly run: Run;
   readonly captures: readonly CaptureEvidence[];
   readonly navigations: readonly ParsedNavigation[];
@@ -74,9 +72,9 @@ function crawlerBug(message: string): Error {
   return new Error(`Crawl result rejected: ${message}`);
 }
 
-function parseCrawl(staticSide: StaticSide, crawl: CrawlResult, runDirectory: string): ParsedCrawl {
-  const { build, application } = staticSide.ingestion;
-  const id = runId({ buildId: build.id, origin: crawl.origin, session: crawl.session, startedAt: crawl.startedAt });
+export function validateCrawl(sealed: SealedCrawlV1, runDirectory: string): ValidatedRun {
+  const { crawl, snapshotId } = sealed;
+  const id = runId({ snapshotId, origin: crawl.origin, session: crawl.session, startedAt: crawl.startedAt });
   const onOrigin = (url: PageUrl): PageUrl => {
     if (new URL(url).origin !== crawl.origin) throw crawlerBug(`${url} is not on ${crawl.origin}`);
     return url;
@@ -91,7 +89,7 @@ function parseCrawl(staticSide: StaticSide, crawl: CrawlResult, runDirectory: st
       throw crawlerBug(`capture ${capture.key} has HTTP status ${capture.httpStatus}`);
     }
     urls.add(capture.url);
-    const identity = { kind: 'capture', buildId: build.id, runId: id, url: onOrigin(capture.url) } as const;
+    const identity = { kind: 'capture', runId: id, url: onOrigin(capture.url) } as const;
     byKey.set(capture.key, {
       ...identity,
       id: evidenceId(identity),
@@ -133,15 +131,15 @@ function parseCrawl(staticSide: StaticSide, crawl: CrawlResult, runDirectory: st
 
   const run: Run = {
     id,
-    applicationId: application.id,
-    buildId: build.id,
+    snapshotId,
     origin: crawl.origin,
     session: crawl.session,
+    environment: sealed.environment,
+    seededBy: sealed.seededBy,
     startedAt: crawl.startedAt,
     finishedAt: crawl.finishedAt,
     stop: crawl.stop,
     crawlerVersion: crawl.crawlerVersion,
-    reconcilerVersion: RECONCILER_VERSION,
     requests: crawl.requests,
   };
   return { run, captures: [...byKey.values()], navigations };
@@ -173,7 +171,7 @@ function reconciler(staticSide: StaticSide) {
   // State clustering replaces only this: every screen has its default state today.
   const stateOf = (pattern: RoutePattern): StateId =>
     stateId({
-      screenId: screenId({ applicationId: ingestion.application.id, routePattern: pattern }),
+      screenId: screenId({ appKey: ingestion.application.id, routePattern: pattern }),
       key: DEFAULT_STATE_KEY,
     });
   const tripleKey = (source: StateId, trigger: Trigger['kind'], target: StateId) => `${source}|${trigger}|${target}`;
@@ -222,20 +220,15 @@ function ignored(step: StepOutcome['step'], reason: IgnoreReason): Step {
   return { outcome: { step, kind: 'ignored', reason } };
 }
 
-export function reconcileRun({
-  staticSide,
-  crawl,
-  runDirectory,
-}: {
-  staticSide: StaticSide;
-  crawl: CrawlResult;
-  runDirectory: string;
-}): RunIngestion {
-  const parsed = parseCrawl(staticSide, crawl, runDirectory);
+export function reconcileRun({ staticSide, validated }: { staticSide: StaticSide; validated: ValidatedRun }): RunIngestion {
+  const { snapshot, analysis, application } = staticSide.ingestion;
+  if (validated.run.snapshotId !== snapshot.id) {
+    throw new Error(`Run ${validated.run.id} belongs to snapshot ${validated.run.snapshotId}, not ${snapshot.id}`);
+  }
   const { resolve, stateOf, targetOf, staticMatch } = reconciler(staticSide);
   const report: StepOutcome[] = [];
 
-  const captures = [...parsed.captures].sort(byId).map((evidence) => {
+  const captures = [...validated.captures].sort(byId).map((evidence) => {
     const step = { kind: 'capture', evidenceId: evidence.id } as const;
     const resolution = resolve(evidence.url);
     if (resolution.kind === 'not-a-screen') {
@@ -243,7 +236,7 @@ export function reconcileRun({
       return { evidence, match: null };
     }
     const { pattern } = resolution;
-    const subject = screenId({ applicationId: parsed.run.applicationId, routePattern: pattern });
+    const subject = screenId({ appKey: application.id, routePattern: pattern });
     if (evidence.httpStatus < 400) {
       report.push({ step, kind: 'supports', subject });
       const match: ScreenMatch = { verdict: 'supports', rule: 'rendered', url: evidence.url, pattern };
@@ -271,7 +264,7 @@ export function reconcileRun({
   const navigations = new Map<EvidenceId, { evidence: NavigationEvidence; matches: Map<TransitionId, Matched> }>();
   const created = new Map<TransitionId, RuntimeOnlyTransition>();
 
-  for (const navigation of parsed.navigations) {
+  for (const navigation of validated.navigations) {
     const { seq, chain, landing } = navigation;
     if (landing.kind === 'aborted') {
       report.push({ step: { kind: 'aborted', seq }, kind: 'ignored', reason: { kind: 'aborted', error: landing.error } });
@@ -376,8 +369,7 @@ export function reconcileRun({
           };
     const identity = {
       kind: 'navigation',
-      buildId: parsed.run.buildId,
-      runId: parsed.run.id,
+      runId: validated.run.id,
       start,
       requested: navigation.requested,
     } as const;
@@ -405,7 +397,8 @@ export function reconcileRun({
   }
 
   return {
-    run: parsed.run,
+    analysisId: analysis.id,
+    run: validated.run,
     captures,
     navigations: [...navigations.values()]
       .map(({ evidence, matches }) => ({

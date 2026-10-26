@@ -1,19 +1,27 @@
 import type { Kysely } from 'kysely';
 
-// Rows are plain strings and nullable columns; branded/union types are built in graph-store.ts.
 export interface ApplicationsTable {
   id: string;
-  root_path: string;
+  repo_identity: string;
+  subpath: string;
   framework: string;
 }
 
-export interface BuildsTable {
+export interface SnapshotsTable {
   id: string;
   application_id: string;
   commit_sha: string;
   source_hash: string;
+  worktree: string;
   branch: string | null;
+  created_at: string;
+}
+
+export interface AnalysesTable {
+  id: string;
+  snapshot_id: string;
   analyzer_version: string;
+  inputs_hash: string;
   created_at: string;
 }
 
@@ -39,38 +47,37 @@ export interface TransitionsTable {
   unresolved_expression: string | null;
 }
 
-export interface EvidenceTable {
+export interface StaticEvidenceTable {
   id: string;
-  build_id: string;
-  kind: string;
-  extractor: string | null;
-  span_file: string | null;
-  span_start_line: number | null;
-  span_start_column: number | null;
-  span_end_line: number | null;
-  span_end_column: number | null;
+  analysis_id: string;
+  extractor: string;
+  span_file: string;
+  span_start_line: number;
+  span_start_column: number;
+  span_end_line: number;
+  span_end_column: number;
 }
 
-export interface ObservationsTable {
+export interface StaticObservationsTable {
+  analysis_id: string;
   evidence_id: string;
   subject_kind: string;
   subject_id: string;
   verdict: string;
-  match: string | null;
 }
 
 export interface RunsTable {
   id: string;
-  application_id: string;
-  build_id: string;
+  snapshot_id: string;
   origin: string;
   session_kind: string;
   session_label: string;
+  environment: string;
+  seeded_by: string;
   started_at: string;
   finished_at: string;
   stop: string;
   crawler_version: string;
-  reconciler_version: string;
   requests_allowed: number;
   requests_blocked: number;
 }
@@ -97,17 +104,57 @@ export interface NavigationsTable {
   log_seq: number;
 }
 
+export interface MatchesTable {
+  snapshot_id: string;
+  run_id: string;
+  analysis_id: string;
+  created_at: string;
+}
+
+export interface ScreenMatchesTable {
+  snapshot_id: string;
+  run_id: string;
+  analysis_id: string;
+  capture_id: string;
+  screen_id: string;
+  verdict: string;
+  match: string;
+}
+
+export interface TransitionMatchesTable {
+  snapshot_id: string;
+  run_id: string;
+  analysis_id: string;
+  navigation_id: string;
+  transition_id: string;
+  verdict: string;
+  match: string;
+}
+
+export interface MatchFailuresTable {
+  snapshot_id: string;
+  sealed_run_id: string;
+  analysis_id: string;
+  error: string;
+  created_at: string;
+}
+
 export interface Database {
   applications: ApplicationsTable;
-  builds: BuildsTable;
+  snapshots: SnapshotsTable;
+  analyses: AnalysesTable;
   screens: ScreensTable;
   ui_states: UiStatesTable;
   transitions: TransitionsTable;
-  evidence: EvidenceTable;
-  observations: ObservationsTable;
+  static_evidence: StaticEvidenceTable;
+  static_observations: StaticObservationsTable;
   runs: RunsTable;
   captures: CapturesTable;
   navigations: NavigationsTable;
+  matches: MatchesTable;
+  screen_matches: ScreenMatchesTable;
+  transition_matches: TransitionMatchesTable;
+  match_failures: MatchFailuresTable;
 }
 
 export type GraphDb = Kysely<Database>;

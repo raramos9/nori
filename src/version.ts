@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseAnalyzerVersion, type AnalyzerVersion } from './graph/model.js';
 import { sourceHash } from './graph/source-hash.js';
 
 export function readVersion(): string {
@@ -16,11 +17,14 @@ export function readVersion(): string {
 const CODE_FILE = /\.(?:js|ts)$/;
 const TEST_FILE = /\.test\.(?:js|ts)$/;
 
-// The package version alone would let an unbumped logic change reuse a build and keep its stale rows.
-export function analyzerVersion(): string {
+let memo: AnalyzerVersion | undefined;
+
+export function analyzerVersion(): AnalyzerVersion {
+  if (memo !== undefined) return memo;
   const codeDir = fileURLToPath(new URL('.', import.meta.url));
   const files = readdirSync(codeDir, { recursive: true, encoding: 'utf8' })
     .filter((file) => CODE_FILE.test(file) && !TEST_FILE.test(file))
     .map((file) => ({ path: file.split(sep).join('/'), content: readFileSync(join(codeDir, file)) }));
-  return `${readVersion()}+${sourceHash({ files }).slice(0, 12)}`;
+  memo = parseAnalyzerVersion(`${readVersion()}+${sourceHash({ files }).slice(0, 12)}`);
+  return memo;
 }

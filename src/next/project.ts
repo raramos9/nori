@@ -1,16 +1,18 @@
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { errorCode, NoriError } from '../errors.js';
-import type { CommitSha } from '../graph/model.js';
+import type { CommitSha, Worktree } from '../graph/model.js';
 import type { SourceFile } from '../graph/source-hash.js';
-import { assertInsideWorkTree, listFiles, readHead, workTreeTop } from '../repo/git.js';
+import { assertInsideWorkTree, listFiles, readHead, workTreeTop, worktreeState } from '../repo/git.js';
 import { APP_DIRS, type AppDir } from './routes.js';
 
 export type NextProject = {
   readonly root: string;
+  readonly top: string;
   readonly appDir: AppDir;
   readonly commitSha: CommitSha;
   readonly branch: string | null;
+  readonly worktree: Worktree;
   readonly files: readonly SourceFile[];
 };
 
@@ -100,12 +102,16 @@ export async function discoverProject({ path }: { path: string }): Promise<NextP
   await assertNextManifest({ root });
   const appDir = await findAppDir({ root });
   await assertInsideWorkTree({ root });
+  const gitTop = await workTreeTop({ root });
+  if (gitTop === null) throw new NoriError(`${root} is not inside a git repository`);
+  const top = await realpath(gitTop);
   const { commitSha, branch } = await readHead({ root });
+  const worktree = await worktreeState({ root });
 
   const files: SourceFile[] = [];
   for (const file of await listFiles({ root })) {
     const content = await readFileIfPresent(join(root, file));
     if (content !== null) files.push({ path: file, content });
   }
-  return { root, appDir, commitSha, branch, files };
+  return { root, top, appDir, commitSha, branch, worktree, files };
 }

@@ -5,10 +5,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { NoriError } from '../errors.js';
-import { applicationId } from '../graph/ids.js';
-import { appHome, runDirectories, stateDatabasePath } from '../runtime/layout.js';
-import { GraphStore } from '../store/graph-store.js';
-import { DEFAULT_BUDGETS, parseStorageState, parseVerifyOrigin, verify } from './verify.js';
+import type { BuildGraph, Snapshot } from '../graph/model.js';
+import { appHome, runDirectory, stateDatabasePath } from '../runtime/layout.js';
+import { CRAWL_FILE } from '../runtime/sealed-run.js';
+import { openReadDatabase } from '../store/database.js';
+import { listBuilds, loadBuild } from '../store/reads.js';
+import { currentEnvironment, DEFAULT_BUDGETS, parseStorageState, parseVerifyOrigin, verify } from './verify.js';
 
 describe('parseVerifyOrigin', () => {
   it('accepts http and https origins and drops the trailing slash', () => {
@@ -100,6 +102,16 @@ function nextProject(): string {
   return root;
 }
 
+async function storedBuild(snapshot: Snapshot): Promise<BuildGraph | null> {
+  const db = await openReadDatabase({ path: stateDatabasePath(snapshot.appKey) });
+  try {
+    const summary = (await listBuilds(db)).find((build) => build.snapshot.id === snapshot.id);
+    return summary === undefined ? null : await loadBuild(db, summary.analyses[0].id);
+  } finally {
+    await db.destroy();
+  }
+}
+
 const options = (path: string) => ({
   path,
   url: origin,
@@ -125,23 +137,21 @@ describe('verify', { timeout: 60_000 }, () => {
       throw error;
     });
     const [outcome] = report.runs;
-    if (outcome?.kind !== 'ingested') throw new Error('expected an ingested run');
-    expect(outcome.ingestion.captures.map(({ evidence }) => evidence.url).sort()).toEqual([`${origin}/`, `${origin}/about`]);
+    if (outcome?.kind !== 'matched-now') throw new Error('expected a run matched by this verify');
+    const { run, captures } = outcome.ingestion;
+    expect(captures.map(({ evidence }) => evidence.url).sort()).toEqual([`${origin}/`, `${origin}/about`]);
+    expect(run).toMatchObject({ snapshotId: report.snapshot.id, environment: currentEnvironment(process.env) });
 
-    const { sealed, staging } = runDirectories(report.build.applicationId, outcome.run.id);
-    expect(existsSync(join(sealed, 'reconcile.json'))).toBe(true);
-    expect(existsSync(staging)).toBe(false);
-    expect(readdirSync(join(appHome(report.build.applicationId), 'runs'))).toEqual([outcome.run.id]);
+    const { appKey, id: snapshotId } = report.snapshot;
+    expect(existsSync(join(runDirectory(appKey, snapshotId, run.id), CRAWL_FILE))).toBe(true);
+    expect(readdirSync(join(appHome(appKey), 'runs'))).toEqual([snapshotId]);
+    expect(readdirSync(join(appHome(appKey), 'runs', snapshotId))).toEqual([run.id]);
 
-    const store = await GraphStore.open({ path: stateDatabasePath(report.build.applicationId) });
-    try {
-      const graph = await store.loadBuildGraph({ buildId: report.build.id });
-      expect(graph?.runs.map((run) => run.id)).toEqual([outcome.run.id]);
-      const observed = graph?.transitions.filter(({ status }) => status === 'observed') ?? [];
-      expect(observed.length).toBeGreaterThan(0);
-    } finally {
-      await store.close();
-    }
+    const graph = await storedBuild(report.snapshot);
+    expect(graph?.runs.map(({ id }) => id)).toEqual([run.id]);
+    expect(graph?.runs[0]?.seededBy).toBe(graph?.analysis.analyzerVersion);
+    const observed = graph?.transitions.filter(({ status }) => status === 'observed') ?? [];
+    expect(observed.length).toBeGreaterThan(0);
   });
 
   it('does not ingest a run whose sources changed during the crawl', async (test) => {
@@ -152,16 +162,9 @@ describe('verify', { timeout: 60_000 }, () => {
       throw error;
     });
     expect(report.runs).toHaveLength(1);
-    expect(report.runs[0]?.kind).toBe('source-changed');
+    expect(report.runs[0]).toMatchObject({ kind: 'source-changed', changed: 'sources' });
 
-    const store = await GraphStore.open({ path: stateDatabasePath(report.build.applicationId) });
-    try {
-      const graph = await store.loadBuildGraph({ buildId: report.build.id });
-      expect(graph?.runs).toEqual([]);
-    } finally {
-      await store.close();
-    }
-    const runsDirectory = join(appHome(report.build.applicationId), 'runs');
-    expect(readdirSync(runsDirectory)).toEqual([]);
+    expect((await storedBuild(report.snapshot))?.runs).toEqual([]);
+    expect(readdirSync(join(appHome(report.snapshot.appKey), 'runs'))).toEqual([]);
   });
 });

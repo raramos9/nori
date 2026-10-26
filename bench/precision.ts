@@ -74,7 +74,7 @@ async function resolvedEdges(app: BenchApp, path: string): Promise<Edge[]> {
   const { ingestion } = await analyze({ path, createdAt: new Date(0) });
   const stateToPattern = new Map(
     ingestion.screens.map(({ routePattern }) => [
-      stateId({ screenId: screenId({ applicationId: ingestion.application.id, routePattern }), key: DEFAULT_STATE_KEY }),
+      stateId({ screenId: screenId({ appKey: ingestion.application.id, routePattern }), key: DEFAULT_STATE_KEY }),
       routePattern,
     ]),
   );

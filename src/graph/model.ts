@@ -3,9 +3,10 @@ import type { Redirect, RunStop, RuntimeAction } from '../runtime/crawl-result.j
 
 type Brand<Name extends string> = string & { readonly __brand: Name };
 
-export type ApplicationId = Brand<'ApplicationId'>;
 export type AppKey = Brand<'AppKey'>;
-export type BuildId = Brand<'BuildId'>;
+export type SnapshotId = Brand<'SnapshotId'>;
+export type AnalysisId = Brand<'AnalysisId'>;
+export type AnalyzerVersion = Brand<'AnalyzerVersion'>;
 export type ScreenId = Brand<'ScreenId'>;
 export type StateId = Brand<'StateId'>;
 export type TransitionId = Brand<'TransitionId'>;
@@ -35,9 +36,9 @@ function idParser<B extends string>(name: string, prefix: string): (value: strin
   return brandParser<B>(name, (value) => pattern.test(value));
 }
 
-export const parseApplicationId = idParser<ApplicationId>('ApplicationId', 'app');
 export const parseAppKey = idParser<AppKey>('AppKey', 'app');
-export const parseBuildId = idParser<BuildId>('BuildId', 'bld');
+export const parseSnapshotId = idParser<SnapshotId>('SnapshotId', 'snp');
+export const parseAnalysisId = idParser<AnalysisId>('AnalysisId', 'ana');
 export const parseScreenId = idParser<ScreenId>('ScreenId', 'scr');
 export const parseStateId = idParser<StateId>('StateId', 'sta');
 export const parseTransitionId = idParser<TransitionId>('TransitionId', 'trn');
@@ -47,6 +48,11 @@ export const parseRunId = idParser<RunId>('RunId', 'run');
 export const parseArtifactPath = brandParser<ArtifactPath>(
   'ArtifactPath',
   (value) => isAbsolute(value) && normalize(value) === value,
+);
+
+export const parseAnalyzerVersion = brandParser<AnalyzerVersion>(
+  'AnalyzerVersion',
+  (value) => value !== '' && value.trim() === value,
 );
 
 const ROUTE_PATTERN = /^\/$|^(?:\/[^/()@\s]+)+$/;
@@ -88,25 +94,45 @@ export type Session =
 
 export type Framework = 'next-app-router';
 
+export type RepoIdentity = `remote:${string}` | `local:${string}`;
+
+export function parseRepoIdentity(value: string): RepoIdentity {
+  if (value.startsWith('remote:') || value.startsWith('local:')) return value as RepoIdentity;
+  throw new Error(`Invalid RepoIdentity: ${JSON.stringify(value)}`);
+}
+
 export type Application = {
-  readonly id: ApplicationId;
-  readonly rootPath: string;
+  readonly id: AppKey;
+  readonly repoIdentity: RepoIdentity;
+  readonly subpath: string;
   readonly framework: Framework;
 };
 
-export type Build = {
-  readonly id: BuildId;
-  readonly applicationId: ApplicationId;
+export type Worktree = 'clean' | 'dirty';
+
+export type Snapshot = {
+  readonly id: SnapshotId;
+  readonly appKey: AppKey;
   readonly commitSha: CommitSha;
   readonly sourceHash: string;
+  readonly worktree: Worktree;
   readonly branch: string | null;
-  readonly analyzerVersion: string;
   readonly createdAt: Date;
 };
 
+export type Analysis = {
+  readonly id: AnalysisId;
+  readonly snapshotId: SnapshotId;
+  readonly analyzerVersion: AnalyzerVersion;
+  readonly inputsHash: string;
+  readonly createdAt: Date;
+};
+
+export type Environment = 'local' | 'ci';
+
 export type Screen = {
   readonly id: ScreenId;
-  readonly applicationId: ApplicationId;
+  readonly appKey: AppKey;
   readonly routePattern: RoutePattern;
 };
 
@@ -156,22 +182,22 @@ export type SourceSpan = {
 export type StaticEvidence = {
   readonly kind: 'static';
   readonly id: EvidenceId;
-  readonly buildId: BuildId;
+  readonly analysisId: AnalysisId;
   readonly span: SourceSpan;
   readonly extractor: string;
 };
 
 export type Run = {
   readonly id: RunId;
-  readonly applicationId: ApplicationId;
-  readonly buildId: BuildId;
+  readonly snapshotId: SnapshotId;
   readonly origin: Origin;
   readonly session: Session;
+  readonly environment: Environment;
+  readonly seededBy: AnalyzerVersion;
   readonly startedAt: Date;
   readonly finishedAt: Date;
   readonly stop: RunStop;
   readonly crawlerVersion: string;
-  readonly reconcilerVersion: string;
   readonly requests: { readonly allowed: number; readonly blocked: number };
 };
 
@@ -185,7 +211,6 @@ export type Capture = {
 export type CaptureEvidence = Capture & {
   readonly kind: 'capture';
   readonly id: EvidenceId;
-  readonly buildId: BuildId;
   readonly runId: RunId;
 };
 
@@ -201,7 +226,6 @@ export type NavigationEvidenceStart =
 export type NavigationEvidence = {
   readonly kind: 'navigation';
   readonly id: EvidenceId;
-  readonly buildId: BuildId;
   readonly runId: RunId;
   readonly start: NavigationEvidenceStart;
   readonly requested: PageUrl;
@@ -215,8 +239,8 @@ export type Evidence = StaticEvidence | RuntimeEvidence;
 
 export type EvidenceIdentity =
   | Omit<StaticEvidence, 'id'>
-  | Pick<CaptureEvidence, 'kind' | 'buildId' | 'runId' | 'url'>
-  | Pick<NavigationEvidence, 'kind' | 'buildId' | 'runId' | 'start' | 'requested'>;
+  | Pick<CaptureEvidence, 'kind' | 'runId' | 'url'>
+  | Pick<NavigationEvidence, 'kind' | 'runId' | 'start' | 'requested'>;
 
 export type ObservationSubject =
   | { readonly kind: 'screen'; readonly id: ScreenId }
@@ -310,7 +334,8 @@ export function deriveEvidenceStatus(observations: NonEmpty<EvidenceObservation>
 
 export type StaticIngestion = {
   readonly application: Application;
-  readonly build: Build;
+  readonly snapshot: Snapshot;
+  readonly analysis: Analysis;
   readonly screens: readonly Screen[];
   readonly transitions: readonly Transition[];
   readonly evidence: readonly StaticEvidence[];
@@ -346,6 +371,7 @@ export type StepOutcome =
   | { readonly step: StepRef; readonly kind: 'ignored'; readonly reason: IgnoreReason };
 
 export type RunIngestion = {
+  readonly analysisId: AnalysisId;
   readonly run: Run;
   readonly captures: readonly { readonly evidence: CaptureEvidence; readonly match: ScreenMatch | null }[];
   readonly navigations: readonly {
@@ -370,10 +396,18 @@ export type LoadedTransition = {
 };
 
 export type BuildGraph = {
-  readonly build: Build;
+  readonly application: Application;
+  readonly snapshot: Snapshot;
+  readonly analysis: Analysis;
   readonly runs: readonly Run[];
   readonly screens: readonly LoadedScreen[];
   readonly transitions: readonly LoadedTransition[];
+};
+
+export type BuildSummary = {
+  readonly snapshot: Snapshot;
+  readonly analyses: NonEmpty<Analysis>;
+  readonly runCount: number;
 };
 
 // The static unresolved transitions that might be the call a runtime-only transition walked: same

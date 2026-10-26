@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { errorCode, NoriError } from '../errors.js';
-import { parseCommitSha, type CommitSha } from '../graph/model.js';
+import { parseCommitSha, type CommitSha, type Worktree } from '../graph/model.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -15,6 +15,11 @@ type GitResult =
   | { readonly kind: 'ok'; readonly stdout: string }
   | { readonly kind: 'failed'; readonly stderr: string };
 
+// A remote URL in git's output can carry a token, as in https://x-access-token:T@github.com/o/r.
+export function redactUserinfo(text: string): string {
+  return text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1***@');
+}
+
 async function runGit({ cwd, args }: { cwd: string; args: readonly string[] }): Promise<GitResult> {
   try {
     const { stdout } = await execFileAsync('git', args, { cwd, maxBuffer: 256 * 1024 * 1024 });
@@ -23,7 +28,7 @@ async function runGit({ cwd, args }: { cwd: string; args: readonly string[] }): 
     if (errorCode(error) === 'ENOENT') throw new NoriError('git was not found on PATH', { cause: error });
     if (typeof errorCode(error) === 'number') {
       const stderr = error instanceof Error && 'stderr' in error ? String(error.stderr) : '';
-      return { kind: 'failed', stderr: stderr.trim() };
+      return { kind: 'failed', stderr: redactUserinfo(stderr.trim()) };
     }
     throw error;
   }
@@ -81,6 +86,15 @@ export async function originUrl({ root }: { root: string }): Promise<string | nu
 export async function workTreeTop({ root }: { root: string }): Promise<string | null> {
   const result = await runGit({ cwd: root, args: ['rev-parse', '--show-toplevel'] });
   return result.kind === 'ok' ? result.stdout.trim() : null;
+}
+
+export async function worktreeState({ root }: { root: string }): Promise<Worktree> {
+  const stdout = await runGitOrThrow({
+    root,
+    args: ['status', '--porcelain', '-z', '--', '.'],
+    failure: 'git status failed',
+  });
+  return stdout === '' ? 'clean' : 'dirty';
 }
 
 // Paths come back relative to `root`, POSIX-separated. -z avoids git's quoting of unusual file names.

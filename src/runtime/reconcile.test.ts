@@ -1,9 +1,7 @@
 import Database from 'better-sqlite3';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { analyze, type Analysis } from '../commands/scan.js';
+import { mkdirSync } from 'node:fs';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { analyze, type Analyzed } from '../commands/scan.js';
 import { runId, screenId, stateId, transitionId } from '../graph/ids.js';
 import {
   DEFAULT_STATE_KEY,
@@ -20,30 +18,24 @@ import {
   type TransitionId,
   type Trigger,
 } from '../graph/model.js';
-import { GraphStore } from '../store/graph-store.js';
 import type { CrawlResult, CrawledNavigation } from './crawl-result.js';
-import { runDirectories } from './layout.js';
-import { reconcileRun, triggerCandidates } from './reconcile.js';
+import { runDirectory, stagingDirectory, stateDatabasePath } from './layout.js';
+import { record, type RunOutcome } from './record.js';
+import { reconcileRun, triggerCandidates, validateCrawl } from './reconcile.js';
+import { sealRun, type SealedCrawlV1 } from './sealed-run.js';
 
 const origin = parseOrigin('http://localhost:3000');
 const page = (path: string) => parsePageUrl(origin, path);
 const anonymous: Session = { kind: 'anonymous' };
 const signedIn: Session = { kind: 'storage-state', label: 'signed-in' };
 
-let analysis: Analysis;
+let analysis: Analyzed;
 beforeAll(async () => {
   analysis = await analyze({ path: 'fixtures/demo', createdAt: new Date('2026-10-22T00:00:00.000Z') });
 });
 
-const stores: GraphStore[] = [];
-const tempDirs: string[] = [];
-afterEach(async () => {
-  await Promise.all(stores.splice(0).map((store) => store.close()));
-  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
-});
-
 function screenOf(pattern: string): ScreenId {
-  return screenId({ applicationId: analysis.ingestion.application.id, routePattern: parseRoutePattern(pattern) });
+  return screenId({ appKey: analysis.ingestion.application.id, routePattern: parseRoutePattern(pattern) });
 }
 
 function stateOf(pattern: string): StateId {
@@ -128,13 +120,19 @@ function crawlOf({
   };
 }
 
+function sealedOf(crawl: CrawlResult): SealedCrawlV1 {
+  const { snapshot, analysis: current } = analysis.ingestion;
+  return { format: 1, snapshotId: snapshot.id, environment: 'local', seededBy: current.analyzerVersion, crawl };
+}
+
+function directoryOf(crawl: CrawlResult): string {
+  const { application, snapshot } = analysis.ingestion;
+  const id = runId({ snapshotId: snapshot.id, origin, session: crawl.session, startedAt: crawl.startedAt });
+  return runDirectory(application.id, snapshot.id, id);
+}
+
 function reconcile(crawl: CrawlResult): RunIngestion {
-  const id = runId({ buildId: analysis.ingestion.build.id, origin, session: crawl.session, startedAt: crawl.startedAt });
-  return reconcileRun({
-    staticSide: analysis,
-    crawl,
-    runDirectory: runDirectories(analysis.ingestion.application.id, id).sealed,
-  });
+  return reconcileRun({ staticSide: analysis, validated: validateCrawl(sealedOf(crawl), directoryOf(crawl)) });
 }
 
 function outcomeOf(ingestion: RunIngestion, step: StepRef): StepOutcome {
@@ -446,19 +444,16 @@ describe('parseCrawl', () => {
   });
 });
 
-async function openFile(): Promise<{ store: GraphStore; path: string }> {
-  const dir = mkdtempSync(join(tmpdir(), 'nori-reconcile-'));
-  tempDirs.push(dir);
-  const path = join(dir, 'graph.db');
-  const store = await GraphStore.open({ path });
-  stores.push(store);
-  return { store, path };
+async function seal(crawl: CrawlResult): Promise<void> {
+  const staging = stagingDirectory(analysis.ingestion.application.id);
+  mkdirSync(staging, { recursive: true });
+  await sealRun({ staging, sealed: directoryOf(crawl), crawl: sealedOf(crawl) });
 }
 
-function countRows(path: string): unknown {
-  const sqlite = new Database(path, { readonly: true });
+function countRows(): unknown {
+  const sqlite = new Database(stateDatabasePath(analysis.ingestion.application.id), { readonly: true });
   try {
-    return ['runs', 'evidence', 'captures', 'navigations', 'transitions', 'observations'].map(
+    return ['runs', 'captures', 'navigations', 'transitions', 'matches', 'screen_matches', 'transition_matches'].map(
       (table) => sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get(),
     );
   } finally {
@@ -467,19 +462,20 @@ function countRows(path: string): unknown {
 }
 
 describe('reconcileRun into the store', () => {
-  it('(g) loads observed, failed and inferred statuses and the runtime-only link; ingesting twice is ingesting once', async () => {
-    const { store, path } = await openFile();
-    await store.ingestStatic(analysis.ingestion);
-    const runs = [reconcile(loggedOut()), reconcile(failures()), reconcile(loggedIn())];
-    for (const run of runs) await store.ingestRun(run);
-    const once = countRows(path);
-    const graph = await store.loadBuildGraph({ buildId: analysis.ingestion.build.id });
-    for (const run of runs) await store.ingestRun(run);
-    expect(countRows(path)).toEqual(once);
-    expect(await store.loadBuildGraph({ buildId: analysis.ingestion.build.id })).toEqual(graph);
-    if (graph === null) throw new Error('build not loaded');
+  it('(g) loads observed, failed and inferred statuses and the runtime-only link; recording twice is recording once', async () => {
+    const crawls = [loggedOut(), failures(), loggedIn()];
+    for (const crawl of crawls) await seal(crawl);
+    const kinds = (outcomes: readonly RunOutcome[]) => outcomes.map(({ kind }) => kind);
+    const first = await record(analysis);
+    expect(kinds(first.runs)).toEqual(['matched-now', 'matched-now', 'matched-now']);
+    const once = countRows();
+    const second = await record(analysis);
+    expect(kinds(second.runs)).toEqual(['already-matched', 'already-matched', 'already-matched']);
+    expect(countRows()).toEqual(once);
+    expect(second.graph).toEqual(first.graph);
+    const { graph } = first;
 
-    expect(graph.runs.map((run) => run.id).sort()).toEqual(runs.map(({ run }) => run.id).sort());
+    expect(graph.runs.map((run) => run.id).sort()).toEqual(crawls.map((crawl) => reconcile(crawl).run.id).sort());
     const screenStatus = (pattern: string) => graph.screens.find(({ screen }) => screen.id === screenOf(pattern))?.status;
     expect(screenStatus('/')).toBe('observed');
     expect(screenStatus('/login')).toBe('observed');

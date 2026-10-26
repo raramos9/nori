@@ -215,15 +215,15 @@ export function toExplorerGraph({ root, graph }: { root: string; graph: BuildGra
     return found;
   };
 
-  const { build } = graph;
+  const { snapshot, analysis } = graph;
   return {
     root,
     build: {
-      id: build.id,
-      commitSha: build.commitSha,
-      branch: build.branch,
-      createdAt: build.createdAt.toISOString(),
-      analyzerVersion: build.analyzerVersion,
+      id: analysis.id,
+      commitSha: snapshot.commitSha,
+      branch: snapshot.branch,
+      createdAt: snapshot.createdAt.toISOString(),
+      analyzerVersion: analysis.analyzerVersion,
     },
     screens: graph.screens.map(({ screen, status, observations }) => ({
       id: screen.id,

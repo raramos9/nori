@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { applicationId, buildId, evidenceId, runId, screenId, stateId, transitionId } from '../graph/ids.js';
+import { evidenceId, runId, screenId, stateId, transitionId } from '../graph/ids.js';
 import {
   DEFAULT_STATE_KEY,
   parseArtifactPath,
-  parseCommitSha,
   parseOrigin,
   parsePageUrl,
   parseRoutePattern,
-  type Build,
   type CaptureEvidence,
   type NavigationEvidence,
   type Run,
@@ -17,25 +15,20 @@ import {
   type LoadedTransition,
   type Transition,
 } from '../graph/model.js';
+import { TEST_APP, testAnalysis, testSnapshot } from '../testing/identity.js';
 import { toExplorerGraph } from './view.js';
 
 const rootPath = '/repo/web';
-const applicationIdValue = applicationId({ rootPath });
-const commitSha = parseCommitSha('a'.repeat(40));
-const build: Build = {
-  id: buildId({ applicationId: applicationIdValue, commitSha, sourceHash: 'h', analyzerVersion: '1' }),
-  applicationId: applicationIdValue,
-  commitSha,
-  sourceHash: 'h',
-  branch: 'main',
-  analyzerVersion: '1',
-  createdAt: new Date('2026-01-01T00:00:00.000Z'),
-};
+const appKey = TEST_APP.id;
+const snapshot = testSnapshot();
+const analysis = testAnalysis(snapshot, { analyzerVersion: '1' });
+const { commitSha } = snapshot;
+const build = { application: TEST_APP, snapshot, analysis };
 
 function evidenceAt(file: string, line: number, extractor: string): StaticEvidence {
   const identity = {
     kind: 'static',
-    buildId: build.id,
+    analysisId: analysis.id,
     span: { file, start: { line, column: 3 }, end: { line, column: 30 } },
     extractor,
   } as const;
@@ -44,10 +37,10 @@ function evidenceAt(file: string, line: number, extractor: string): StaticEviden
 
 function loadedScreen(route: string): LoadedScreen {
   const routePattern = parseRoutePattern(route);
-  const id = screenId({ applicationId: applicationIdValue, routePattern });
+  const id = screenId({ appKey, routePattern });
   const evidence = evidenceAt(`app${route === '/' ? '' : route}/page.tsx`, 1, 'next-page-file');
   return {
-    screen: { id, applicationId: applicationIdValue, routePattern },
+    screen: { id, appKey, routePattern },
     states: [{ id: stateId({ screenId: id, key: DEFAULT_STATE_KEY }), screenId: id, key: DEFAULT_STATE_KEY }],
     observations: [{ evidence, verdict: 'supports' }],
     status: 'inferred',
@@ -70,7 +63,7 @@ describe('toExplorerGraph', () => {
 
   it('maps state ids to screen ids and keeps unresolved targets as they are', () => {
     const graph: BuildGraph = {
-      build,
+      ...build,
       runs: [],
       screens: [home, about],
       transitions: [
@@ -83,7 +76,7 @@ describe('toExplorerGraph', () => {
 
     expect(view.root).toBe(rootPath);
     expect(view.build).toEqual({
-      id: build.id,
+      id: analysis.id,
       commitSha,
       branch: 'main',
       createdAt: '2026-01-01T00:00:00.000Z',
@@ -107,7 +100,7 @@ describe('toExplorerGraph', () => {
 
   it('throws when a resolved target is not a state of the build', () => {
     const graph: BuildGraph = {
-      build,
+      ...build,
       runs: [],
       screens: [home],
       transitions: [loadedTransition(home, { kind: 'resolved', stateId: about.states[0].id }, 4)],
@@ -117,7 +110,7 @@ describe('toExplorerGraph', () => {
 
   it('throws when a source state is not a state of the build', () => {
     const graph: BuildGraph = {
-      build,
+      ...build,
       runs: [],
       screens: [home],
       transitions: [loadedTransition(about, { kind: 'resolved', stateId: home.states[0].id }, 4)],
@@ -130,21 +123,21 @@ describe('toExplorerGraph', () => {
     const session = { kind: 'storage-state', label: 'signed-in' } as const;
     const startedAt = new Date('2026-01-02T00:00:00.000Z');
     const run: Run = {
-      id: runId({ buildId: build.id, origin, session, startedAt }),
-      applicationId: applicationIdValue,
-      buildId: build.id,
+      id: runId({ snapshotId: snapshot.id, origin, session, startedAt }),
+      snapshotId: snapshot.id,
       origin,
       session,
+      environment: 'local',
+      seededBy: analysis.analyzerVersion,
       startedAt,
       finishedAt: new Date('2026-01-02T00:01:00.000Z'),
       stop: 'frontier-exhausted',
       crawlerVersion: '1',
-      reconcilerVersion: '1',
       requests: { allowed: 7, blocked: 1 },
     };
 
     function captureOf(path: string): CaptureEvidence {
-      const identity = { kind: 'capture', buildId: build.id, runId: run.id, url: parsePageUrl(origin, path) } as const;
+      const identity = { kind: 'capture', runId: run.id, url: parsePageUrl(origin, path) } as const;
       return {
         ...identity,
         id: evidenceId(identity),
@@ -158,7 +151,7 @@ describe('toExplorerGraph', () => {
       const homeCapture = captureOf('/');
       const aboutCapture = captureOf('/about');
       const requested = parsePageUrl(origin, '/about');
-      const navIdentity = { kind: 'navigation', buildId: build.id, runId: run.id, start: { kind: 'entry' }, requested } as const;
+      const navIdentity = { kind: 'navigation', runId: run.id, start: { kind: 'entry' }, requested } as const;
       const navigation: NavigationEvidence = {
         ...navIdentity,
         id: evidenceId(navIdentity),
@@ -199,7 +192,7 @@ describe('toExplorerGraph', () => {
 
       const view = toExplorerGraph({
         root: rootPath,
-        graph: { build, runs: [run], screens: [observedHome, about], transitions: [staticSibling, runtimeOnly] },
+        graph: { ...build, runs: [run], screens: [observedHome, about], transitions: [staticSibling, runtimeOnly] },
       });
 
       expect(view.runs).toEqual([

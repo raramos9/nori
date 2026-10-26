@@ -1,36 +1,32 @@
-import { existsSync } from 'node:fs';
-import { rename } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { parseArtifactPath, type ApplicationId, type ArtifactPath, type RunId } from '../graph/model.js';
+import { parseArtifactPath, type AppKey, type ArtifactPath, type RunId, type SnapshotId } from '../graph/model.js';
 
 const DATABASE_FILE = 'graph.db';
 const RUNS_DIR = 'runs';
 const STAGING_SUFFIX = '.partial';
 
-export function appHome(applicationId: ApplicationId): string {
+export function appHome(appKey: AppKey): string {
   const home = process.env.NORI_HOME;
-  return join(home !== undefined && home !== '' ? home : join(homedir(), '.nori'), 'apps', applicationId);
+  return join(home !== undefined && home !== '' ? home : join(homedir(), '.nori'), 'stores', appKey);
 }
 
-export function stateDatabasePath(applicationId: ApplicationId): string {
-  return join(appHome(applicationId), DATABASE_FILE);
+export function stateDatabasePath(appKey: AppKey): string {
+  return join(appHome(appKey), DATABASE_FILE);
 }
 
-export type RunDirectories = { readonly staging: string; readonly sealed: string };
-
-export function runDirectories(applicationId: ApplicationId, runId: RunId): RunDirectories {
-  const sealed = join(appHome(applicationId), RUNS_DIR, runId);
-  return { staging: `${sealed}${STAGING_SUFFIX}`, sealed };
+// Staging sits beside the sealed runs, on the same filesystem, so sealing is one rename.
+export function stagingDirectory(appKey: AppKey): string {
+  return join(appHome(appKey), RUNS_DIR, `${randomUUID()}${STAGING_SUFFIX}`);
 }
 
-export async function sealRunDirectory({ staging, sealed }: RunDirectories): Promise<void> {
-  try {
-    await rename(staging, sealed);
-  } catch (error) {
-    if (existsSync(sealed) && !existsSync(staging)) return;
-    throw error;
-  }
+export function snapshotRunsDirectory(appKey: AppKey, snapshotId: SnapshotId): string {
+  return join(appHome(appKey), RUNS_DIR, snapshotId);
+}
+
+export function runDirectory(appKey: AppKey, snapshotId: SnapshotId, runId: RunId): string {
+  return join(snapshotRunsDirectory(appKey, snapshotId), runId);
 }
 
 export function isInside(directory: string, path: string): boolean {
