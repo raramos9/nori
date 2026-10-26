@@ -242,6 +242,14 @@ const label = (change: Change) =>
 
 const crawled = { runs: [{ name: 'r' }] } as const;
 
+// A page counts as link-walked only when a follow-link navigation landed on it. A self-link gives a
+// screen that landing without adding a second screen; `unseenLoop` is the same link on a side that
+// did not crawl it.
+const loop = (route: string) => ({ from: route, to: route, seen: [{ run: 'r' }] });
+const unseenLoop = (route: string) => ({ from: route, to: route });
+const screenOnly = <T extends { readonly subject: { readonly kind: string } }>(items: readonly T[]) =>
+  items.filter((item) => item.subject.kind === 'screen');
+
 describe('comparable', () => {
   it('names both apps when they differ', () => {
     const other: Application = { ...TEST_APP, subpath: 'web', id: appKey({ repoIdentity: TEST_APP.repoIdentity, subpath: 'web' }) };
@@ -305,11 +313,15 @@ describe('diffBuilds static claims', () => {
 
   it('never calls a runtime-only screen added or removed', () => {
     const result = diff(
-      { ...crawled, screens: [{ route: '/a', static: false, seen: ['r'] }] },
+      {
+        ...crawled,
+        screens: [{ route: '/a', static: false, seen: ['r'] }],
+        transitions: [{ ...loop('/a'), static: false }],
+      },
       { screens: [] },
     );
     expect(result.changes).toEqual([]);
-    expect(result.gaps).toMatchObject([{ seenIn: 'base', why: 'no-run-in-session' }]);
+    expect(screenOnly(result.gaps)).toMatchObject([{ seenIn: 'base', why: 'no-run-in-session' }]);
   });
 
   it('reports a screen that lost its static support as inference-lost, and the mirror as inference-gained', () => {
@@ -345,24 +357,24 @@ describe('diffBuilds runtime claims', () => {
   });
 
   it('reports a screen the head crawl exhausted its frontier without seeing as newly-unverified', () => {
-    const base = build({ ...crawled, screens: [{ route: '/a', seen: ['r'] }] });
-    const head = build({ commit: 'b', ...crawled, screens: [{ route: '/a' }] });
+    const base = build({ ...crawled, screens: [{ route: '/a', seen: ['r'] }], transitions: [loop('/a')] });
+    const head = build({ commit: 'b', ...crawled, screens: [{ route: '/a' }], transitions: [unseenLoop('/a')] });
     const result = diffBuilds(pairOf(base.graph, head.graph));
-    expect(result.changes).toMatchObject([
+    expect(screenOnly(result.changes)).toMatchObject([
       {
         kind: 'newly-unverified',
         base: { status: 'observed', evidence: [{ kind: 'capture', runId: base.run('r') }] },
         head: { witnesses: [{ runId: head.run('r') }] },
       },
     ]);
-    expect(result.gaps).toEqual([]);
+    expect(screenOnly(result.gaps)).toEqual([]);
   });
 
   it('reports a screen the head crawl saw and a base crawl did not as newly-observed', () => {
-    const base = build({ ...crawled, screens: [{ route: '/a' }] });
-    const head = build({ commit: 'b', ...crawled, screens: [{ route: '/a', seen: ['r'] }] });
+    const base = build({ ...crawled, screens: [{ route: '/a' }], transitions: [unseenLoop('/a')] });
+    const head = build({ commit: 'b', ...crawled, screens: [{ route: '/a', seen: ['r'] }], transitions: [loop('/a')] });
     const result = diffBuilds(pairOf(base.graph, head.graph));
-    expect(result.changes).toMatchObject([
+    expect(screenOnly(result.changes)).toMatchObject([
       { kind: 'newly-observed', base: { witnesses: [{ runId: base.run('r') }] }, head: { status: 'observed' } },
     ]);
   });
@@ -391,44 +403,53 @@ describe('diffBuilds runtime claims', () => {
 
   it('treats a crawled base against an uncrawled head as gaps only', () => {
     const screens = [{ route: '/a', seen: ['r'] }, { route: '/b', seen: ['r'] }];
-    const transitions = [{ from: '/a', to: '/b', seen: [{ run: 'r' }] }];
-    const result = diff({ ...crawled, screens, transitions }, { screens: [{ route: '/a' }, { route: '/b' }], transitions: [{ from: '/a', to: '/b' }] });
+    const transitions = [
+      { from: '/a', to: '/b', seen: [{ run: 'r' }] },
+      { from: '/b', to: '/a', seen: [{ run: 'r' }] },
+    ];
+    const result = diff(
+      { ...crawled, screens, transitions },
+      { screens: [{ route: '/a' }, { route: '/b' }], transitions: [{ from: '/a', to: '/b' }, { from: '/b', to: '/a' }] },
+    );
     expect(result.changes).toEqual([]);
-    expect(result.gaps).toHaveLength(3);
+    expect(result.gaps).toHaveLength(4);
     expect(result.gaps.every((gap) => gap.seenIn === 'base' && gap.why === 'no-run-in-session')).toBe(true);
     expect(result.gaps[0]?.sessions).toEqual([anonymous]);
   });
 
   it('treats an uncrawled base against a crawled head as gaps seen in head', () => {
-    const result = diff({ screens: [{ route: '/a' }] }, { ...crawled, screens: [{ route: '/a', seen: ['r'] }] });
+    const result = diff(
+      { screens: [{ route: '/a' }], transitions: [unseenLoop('/a')] },
+      { ...crawled, screens: [{ route: '/a', seen: ['r'] }], transitions: [loop('/a')] },
+    );
     expect(result.changes).toEqual([]);
-    expect(result.gaps).toMatchObject([{ seenIn: 'head', why: 'no-run-in-session' }]);
+    expect(screenOnly(result.gaps)).toMatchObject([{ seenIn: 'head', why: 'no-run-in-session' }]);
   });
 
   it('refuses a head run that stopped on its budget as a witness', () => {
     const result = diff(
-      { ...crawled, screens: [{ route: '/a', seen: ['r'] }] },
-      { runs: [{ name: 'r', stop: 'budget' }], screens: [{ route: '/a' }] },
+      { ...crawled, screens: [{ route: '/a', seen: ['r'] }], transitions: [loop('/a')] },
+      { runs: [{ name: 'r', stop: 'budget' }], screens: [{ route: '/a' }], transitions: [unseenLoop('/a')] },
     );
     expect(result.changes).toEqual([]);
-    expect(result.gaps).toMatchObject([{ why: 'not-exhausted' }]);
+    expect(screenOnly(result.gaps)).toMatchObject([{ why: 'not-exhausted' }]);
   });
 
   it('refuses a head run of another session as a witness', () => {
     const result = diff(
-      { runs: [{ name: 'r', session: admin }], screens: [{ route: '/a', seen: ['r'] }] },
-      { ...crawled, screens: [{ route: '/a' }] },
+      { runs: [{ name: 'r', session: admin }], screens: [{ route: '/a', seen: ['r'] }], transitions: [loop('/a')] },
+      { ...crawled, screens: [{ route: '/a' }], transitions: [unseenLoop('/a')] },
     );
     expect(result.changes).toEqual([]);
-    expect(result.gaps).toMatchObject([{ why: 'no-run-in-session', sessions: [admin] }]);
+    expect(screenOnly(result.gaps)).toMatchObject([{ why: 'no-run-in-session', sessions: [admin] }]);
   });
 
   it('lets a head run in the seeing session witness when it has company in another', () => {
     const result = diff(
-      { runs: [{ name: 'r', session: admin }], screens: [{ route: '/a', seen: ['r'] }] },
-      { runs: [{ name: 'x' }, { name: 'r', session: admin }], screens: [{ route: '/a' }] },
+      { runs: [{ name: 'r', session: admin }], screens: [{ route: '/a', seen: ['r'] }], transitions: [loop('/a')] },
+      { runs: [{ name: 'x' }, { name: 'r', session: admin }], screens: [{ route: '/a' }], transitions: [unseenLoop('/a')] },
     );
-    expect(kindsOf(result.changes)).toEqual(['newly-unverified']);
+    expect(kindsOf(screenOnly(result.changes))).toEqual(['newly-unverified']);
   });
 
   it('keeps a transition seen only through an interaction out of changes', () => {
@@ -438,7 +459,29 @@ describe('diffBuilds runtime claims', () => {
       { ...crawled, screens, transitions: [{ from: '/a', to: '/b' }] },
     );
     expect(result.changes).toEqual([]);
-    expect(result.gaps).toMatchObject([{ subject: { kind: 'transition' }, why: 'interaction-only' }]);
+    expect(result.gaps).toMatchObject([{ subject: { kind: 'transition' }, why: 'not-link-walked' }]);
+  });
+
+  it('keeps a screen whose only capture is the landing of an interaction out of changes', () => {
+    const result = diff(
+      {
+        ...crawled,
+        screens: [{ route: '/a' }, { route: '/b', seen: ['r'] }],
+        transitions: [{ from: '/a', to: '/b', seen: [{ run: 'r', via: 'interact' }] }],
+      },
+      { ...crawled, screens: [{ route: '/a' }, { route: '/b' }], transitions: [{ from: '/a', to: '/b' }] },
+    );
+    expect(result.changes).toEqual([]);
+    expect(screenOnly(result.gaps)).toMatchObject([{ subject: { routePattern: '/b' }, why: 'not-link-walked' }]);
+  });
+
+  it('keeps a screen captured with no navigation landing on it out of changes', () => {
+    const result = diff(
+      { ...crawled, screens: [{ route: '/a', seen: ['r'] }] },
+      { ...crawled, screens: [{ route: '/a' }] },
+    );
+    expect(result.changes).toEqual([]);
+    expect(result.gaps).toMatchObject([{ subject: { routePattern: '/a' }, why: 'not-link-walked' }]);
   });
 
   it('accepts a transition reached from an entry as walked', () => {

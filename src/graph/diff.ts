@@ -103,7 +103,7 @@ type ChangeOf<S extends Subject, W> =
 
 export type Change = ChangeOf<ScreenSubject, ScreenWitness> | ChangeOf<TransitionSubject, TransitionWitness>;
 
-export type GapReason = 'no-run-in-session' | 'not-exhausted' | 'source-not-captured' | 'interaction-only';
+export type GapReason = 'no-run-in-session' | 'not-exhausted' | 'source-not-captured' | 'not-link-walked';
 export type Gap = {
   readonly subject: Subject;
   readonly seenIn: 'base' | 'head';
@@ -160,6 +160,17 @@ function indexSide(graph: BuildGraph): Side {
     return found;
   };
   const runById = new Map(graph.runs.map((run) => [run.id, run]));
+  // A capture is not proof of a walk: an interaction navigation lands on one too. Only the landing
+  // of an entry or follow-link navigation shows the crawl reached that page by following links.
+  const linkLanded = new Set<EvidenceId>();
+  for (const { observations } of graph.transitions) {
+    for (const { evidence } of observations) {
+      if (evidence.kind !== 'navigation') continue;
+      if (evidence.start.kind === 'entry' || evidence.start.action.kind === 'follow-link') {
+        linkLanded.add(evidence.landing.evidenceId);
+      }
+    }
+  }
 
   const entryFor = (
     subject: Subject,
@@ -181,9 +192,9 @@ function indexSide(graph: BuildGraph): Side {
       runtime.push({ id: evidence.id, runId: run.id, kind: evidence.kind, verdict });
       seeing.set(run.id, run);
       const linkWalked =
-        evidence.kind === 'capture' ||
-        evidence.start.kind === 'entry' ||
-        evidence.start.action.kind === 'follow-link';
+        evidence.kind === 'capture'
+          ? linkLanded.has(evidence.id)
+          : evidence.start.kind === 'entry' || evidence.start.action.kind === 'follow-link';
       if (linkWalked) walking.set(run.id, run);
     }
     if (staticIds.length === 0 && runtime.length === 0) {
@@ -223,7 +234,7 @@ function indexSide(graph: BuildGraph): Side {
 // The runs of `other` that looked where `seen` was seen and found nothing, or the first reason there
 // are none. Absence is a claim only against a crawl that could have produced the missing observation.
 function candidateRuns(seen: SideEntry, other: BuildGraph): NonEmpty<Run> | GapReason {
-  if (seen.walkingRuns.length === 0) return 'interaction-only';
+  if (seen.walkingRuns.length === 0) return 'not-link-walked';
   const sessions = new Set(seen.walkingRuns.map((run) => sessionKey(run.session)));
   const inSession = other.runs.filter((run) => sessions.has(sessionKey(run.session)));
   if (inSession.length === 0) return 'no-run-in-session';
