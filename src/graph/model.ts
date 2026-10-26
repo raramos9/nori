@@ -15,6 +15,8 @@ export type RoutePattern = Brand<'RoutePattern'>;
 export type CommitSha = Brand<'CommitSha'>;
 export type RunId = Brand<'RunId'>;
 export type ArtifactPath = Brand<'ArtifactPath'>;
+export type TestImportId = Brand<'TestImportId'>;
+export type TestCaseKey = Brand<'TestCaseKey'>;
 
 export type NonEmpty<T> = readonly [T, ...T[]];
 
@@ -44,6 +46,8 @@ export const parseStateId = idParser<StateId>('StateId', 'sta');
 export const parseTransitionId = idParser<TransitionId>('TransitionId', 'trn');
 export const parseEvidenceId = idParser<EvidenceId>('EvidenceId', 'evd');
 export const parseRunId = idParser<RunId>('RunId', 'run');
+export const parseTestImportId = idParser<TestImportId>('TestImportId', 'imp');
+export const parseTestCaseKey = idParser<TestCaseKey>('TestCaseKey', 'tcs');
 
 export const parseArtifactPath = brandParser<ArtifactPath>(
   'ArtifactPath',
@@ -403,6 +407,126 @@ export type BuildGraph = {
   readonly unmatchedRuns: readonly RunId[];
   readonly screens: readonly LoadedScreen[];
   readonly transitions: readonly LoadedTransition[];
+};
+
+export type TestImport = {
+  readonly id: TestImportId;
+  readonly snapshotId: SnapshotId;
+  readonly environment: Environment;
+  readonly importedAt: Date;
+  readonly report: {
+    readonly original: ArtifactPath;
+    readonly sealed: ArtifactPath;
+    readonly sha256: string;
+    readonly playwrightVersion: string;
+    readonly startedAt: Date;
+  };
+};
+
+// Playwright's test.status, renamed. flaky means a failed attempt and a passed retry.
+export type TestOutcome = 'passed' | 'failed' | 'skipped' | 'flaky';
+// Playwright's result.status, verbatim.
+export type AttemptStatus = 'passed' | 'failed' | 'timedOut' | 'skipped' | 'interrupted';
+
+export type TestCase = {
+  readonly key: TestCaseKey;
+  readonly title: string;
+  readonly titlePath: readonly string[];
+  readonly file: string;
+  readonly line: number;
+  readonly project: string;
+  readonly expectedStatus: AttemptStatus;
+  readonly outcome: TestOutcome;
+  readonly attempts: readonly TestAttempt[];
+};
+
+export type TestAttempt = {
+  readonly retry: number;
+  readonly status: AttemptStatus;
+  readonly trace: TraceLink;
+  // Empty unless the attempt failed. A located failure names the step whose page the failing call ran on.
+  readonly failures: readonly TestFailure[];
+};
+
+export type TestFailure = { readonly message: string; readonly step: number | null };
+
+export type TraceLink =
+  | { readonly kind: 'read'; readonly original: ArtifactPath; readonly sealed: ArtifactPath; readonly steps: readonly TestStep[] }
+  | { readonly kind: 'trace-less'; readonly reason: TracelessReason };
+
+export type TracelessReason =
+  | { readonly kind: 'no-trace-attachment' }
+  | { readonly kind: 'missing'; readonly path: string }
+  | { readonly kind: 'outside-root'; readonly path: string; readonly root: string }
+  | { readonly kind: 'not-a-file'; readonly path: string }
+  | { readonly kind: 'too-large'; readonly path: string; readonly bytes: number; readonly limit: number }
+  | { readonly kind: 'unreadable'; readonly path: string; readonly why: TraceRejection };
+
+// Every way the untrusted trace bytes can be refused.
+export type TraceRejection =
+  | { readonly kind: 'not-a-zip' | 'zip64' | 'multi-disk' | 'encrypted' | 'truncated' | 'overlapping-entries' }
+  | { readonly kind: 'too-many-entries'; readonly count: number }
+  | { readonly kind: 'unsupported-method'; readonly entry: string; readonly method: number }
+  | {
+      readonly kind: 'unsafe-name' | 'duplicate-name' | 'header-mismatch' | 'size-mismatch' | 'crc-mismatch' | 'inflate-failed';
+      readonly entry: string;
+    }
+  | { readonly kind: 'entry-too-large'; readonly entry: string; readonly bytes: number }
+  | { readonly kind: 'total-too-large'; readonly bytes: number }
+  | { readonly kind: 'no-trace-entries' }
+  | { readonly kind: 'unsupported-trace-version'; readonly version: number }
+  | { readonly kind: 'bad-trace-line'; readonly entry: string; readonly line: number }
+  | { readonly kind: 'too-many-steps'; readonly count: number }
+  | { readonly kind: 'io-error'; readonly code: string };
+
+export type NavigateMethod = 'goto' | 'reload' | 'goBack' | 'goForward';
+
+// anchor is the href of the <a> Playwright marked as the click target in the cause's action snapshot.
+export type StepCause =
+  | { readonly kind: 'navigate'; readonly method: NavigateMethod; readonly requested: string | null }
+  | { readonly kind: 'input'; readonly method: string; readonly selector: string | null; readonly anchor: PageUrl | null }
+  | { readonly kind: 'none' };
+
+// One URL change on one page's main frame. The chain's last URL is the landing; earlier ones are client
+// redirects the same cause led through.
+export type TestStep = {
+  readonly seq: number;
+  readonly page: number;
+  readonly at: number;
+  readonly origin: Origin;
+  readonly cause: StepCause;
+  readonly from: string | null;
+  readonly chain: NonEmpty<string>;
+  readonly assertions: number;
+};
+
+// What one step became under one analysis. Never a TransitionObservation, never a verdict. A
+// walked-runtime-only step names the transition a crawl would mint and attaches only if a crawl did.
+export type TestStepMatch =
+  | { readonly kind: 'entry' }
+  | { readonly kind: 'walked'; readonly transitionId: TransitionId; readonly search: TargetSearch }
+  | { readonly kind: 'walked-runtime-only'; readonly transitionId: TransitionId; readonly search: TargetSearch }
+  | { readonly kind: 'ambiguous'; readonly candidates: NonEmpty<TransitionId>; readonly search: TargetSearch }
+  | { readonly kind: 'no-transition'; readonly search: TargetSearch }
+  | { readonly kind: 'not-a-screen'; readonly url: PageUrl; readonly why: NotAScreen }
+  | { readonly kind: 'off-origin'; readonly url: string }
+  | { readonly kind: 'unattributed' };
+
+export type TestStepRef = { readonly caseKey: TestCaseKey; readonly retry: number; readonly seq: number };
+
+export type TestStepMatchRow = TestStepRef & { readonly match: TestStepMatch };
+
+export type ImportIngestion = {
+  readonly analysisId: AnalysisId;
+  readonly testImport: TestImport;
+  readonly cases: readonly TestCase[];
+  readonly matches: readonly TestStepMatchRow[];
+};
+
+export type LoadedTestImport = {
+  readonly testImport: TestImport;
+  readonly cases: readonly TestCase[];
+  readonly matches: readonly TestStepMatchRow[];
 };
 
 export type BuildSummary = {

@@ -4,6 +4,8 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Kysely, SqliteDialect } from 'kysely';
+import { Migrator } from 'kysely/migration';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { evidenceId, runId, screenId, stateId, transitionId } from '../graph/ids.js';
 import {
@@ -29,7 +31,10 @@ import type { StaticSide } from '../runtime/reconcile.js';
 import { CRAWL_FILE, sealRun } from '../runtime/sealed-run.js';
 import { TEST_APP, testAnalysis, testSnapshot } from '../testing/identity.js';
 import { openReadDatabase, openWriteDatabase } from './database.js';
+import { MIGRATIONS } from './migrations.js';
 import { listBuilds, loadBuild } from './reads.js';
+import { applicationToRow } from './rows.js';
+import type { Database as Schema } from './schema.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const app = TEST_APP.id;
@@ -132,6 +137,10 @@ const TABLES = [
   'screen_matches',
   'transition_matches',
   'match_failures',
+  'test_imports',
+  'test_matches',
+  'test_step_matches',
+  'test_match_failures',
 ] as const;
 
 function countRows(): Record<string, number> {
@@ -203,6 +212,10 @@ describe('record and loadBuild', () => {
       screen_matches: 0,
       transition_matches: 0,
       match_failures: 0,
+      test_imports: 0,
+      test_matches: 0,
+      test_step_matches: 0,
+      test_match_failures: 0,
     });
   });
 
@@ -530,6 +543,26 @@ describe('store files', () => {
       expect(sqlite.pragma('journal_mode', { simple: true })).toBe('wal');
     } finally {
       sqlite.close();
+    }
+  });
+
+  it('adds the test import tables to a store created at 001 and keeps its rows', async () => {
+    const path = join(tempDir('nori-001-'), 'graph.db');
+    const old = new Kysely<Schema>({ dialect: new SqliteDialect({ database: new Database(path) }) });
+    const only001 = {
+      getMigrations: async () => Object.fromEntries(Object.entries(MIGRATIONS).filter(([name]) => name === '001_initial')),
+    };
+    const { error } = await new Migrator({ db: old, provider: only001 }).migrateToLatest();
+    expect(error).toBeUndefined();
+    await old.insertInto('applications').values(applicationToRow(TEST_APP)).execute();
+    await old.destroy();
+
+    const db = await openWriteDatabase({ path });
+    try {
+      expect(await db.selectFrom('applications').select('id').execute()).toEqual([{ id: TEST_APP.id }]);
+      expect(await db.selectFrom('test_imports').selectAll().execute()).toEqual([]);
+    } finally {
+      await db.destroy();
     }
   });
 

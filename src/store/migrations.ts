@@ -303,8 +303,109 @@ const initial: Migration = {
   },
 };
 
+const testImports: Migration = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('test_imports')
+      .addColumn('id', 'text', (c) => c.notNull())
+      .addColumn('snapshot_id', 'text', (c) => c.notNull())
+      .addColumn('environment', 'text', (c) => c.notNull())
+      .addColumn('report_original', 'text', (c) => c.notNull())
+      .addColumn('report_sealed', 'text', (c) => c.notNull())
+      .addColumn('report_sha256', 'text', (c) => c.notNull())
+      .addColumn('playwright_version', 'text', (c) => c.notNull())
+      .addColumn('report_started_at', 'text', (c) => c.notNull())
+      .addColumn('imported_at', 'text', (c) => c.notNull())
+      .addColumn('cases', 'text', (c) => c.notNull())
+      .addPrimaryKeyConstraint('test_imports_pk', ['id'])
+      .addUniqueConstraint('test_imports_snapshot_key', ['snapshot_id', 'id'])
+      .addForeignKeyConstraint('test_imports_snapshot_fk', ['snapshot_id'], 'snapshots', ['id'], cascade)
+      .addCheckConstraint('test_imports_environment', sql`environment in ('local', 'ci')`)
+      .execute();
+
+    await db.schema
+      .createTable('test_matches')
+      .addColumn('snapshot_id', 'text', (c) => c.notNull())
+      .addColumn('import_id', 'text', (c) => c.notNull())
+      .addColumn('analysis_id', 'text', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .addPrimaryKeyConstraint('test_matches_pk', ['import_id', 'analysis_id'])
+      .addUniqueConstraint('test_matches_snapshot_key', ['snapshot_id', 'import_id', 'analysis_id'])
+      .addForeignKeyConstraint(
+        'test_matches_import_fk',
+        ['snapshot_id', 'import_id'],
+        'test_imports',
+        ['snapshot_id', 'id'],
+        cascade,
+      )
+      .addForeignKeyConstraint(
+        'test_matches_analysis_fk',
+        ['snapshot_id', 'analysis_id'],
+        'analyses',
+        ['snapshot_id', 'id'],
+        cascade,
+      )
+      .execute();
+
+    // transition_id has no foreign key: a walked-runtime-only step names a transition only a crawl creates.
+    await db.schema
+      .createTable('test_step_matches')
+      .addColumn('snapshot_id', 'text', (c) => c.notNull())
+      .addColumn('import_id', 'text', (c) => c.notNull())
+      .addColumn('analysis_id', 'text', (c) => c.notNull())
+      .addColumn('case_key', 'text', (c) => c.notNull())
+      .addColumn('retry', 'integer', (c) => c.notNull())
+      .addColumn('seq', 'integer', (c) => c.notNull())
+      .addColumn('kind', 'text', (c) => c.notNull())
+      .addColumn('transition_id', 'text')
+      .addColumn('match', 'text', (c) => c.notNull())
+      .addPrimaryKeyConstraint('test_step_matches_pk', ['analysis_id', 'import_id', 'case_key', 'retry', 'seq'])
+      .addForeignKeyConstraint(
+        'test_step_matches_match_fk',
+        ['snapshot_id', 'import_id', 'analysis_id'],
+        'test_matches',
+        ['snapshot_id', 'import_id', 'analysis_id'],
+        cascade,
+      )
+      .addCheckConstraint(
+        'test_step_matches_kind',
+        sql`kind in ('entry', 'walked', 'walked-runtime-only', 'ambiguous', 'no-transition', 'not-a-screen', 'off-origin', 'unattributed')`,
+      )
+      .addCheckConstraint(
+        'test_step_matches_transition',
+        sql`(kind in ('walked', 'walked-runtime-only')) = (transition_id is not null)`,
+      )
+      .execute();
+
+    await db.schema
+      .createTable('test_match_failures')
+      .addColumn('snapshot_id', 'text', (c) => c.notNull())
+      .addColumn('import_id', 'text', (c) => c.notNull())
+      .addColumn('analysis_id', 'text', (c) => c.notNull())
+      .addColumn('error', 'text', (c) => c.notNull())
+      .addColumn('created_at', 'text', (c) => c.notNull())
+      .addPrimaryKeyConstraint('test_match_failures_pk', ['import_id', 'analysis_id'])
+      .addForeignKeyConstraint(
+        'test_match_failures_analysis_fk',
+        ['snapshot_id', 'analysis_id'],
+        'analyses',
+        ['snapshot_id', 'id'],
+        cascade,
+      )
+      .execute();
+
+    await db.schema.createIndex('test_matches_analysis_idx').on('test_matches').column('analysis_id').execute();
+    await db.schema
+      .createIndex('test_step_matches_transition_idx')
+      .on('test_step_matches')
+      .columns(['analysis_id', 'transition_id'])
+      .execute();
+  },
+};
+
 export const MIGRATIONS: Readonly<Record<string, Migration>> = {
   '001_initial': initial,
+  '002_test_imports': testImports,
 };
 
 const provider: MigrationProvider = {

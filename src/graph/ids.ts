@@ -7,6 +7,8 @@ import {
   parseEvidenceId,
   parseScreenId,
   parseStateId,
+  parseTestCaseKey,
+  parseTestImportId,
   parseTransitionId,
   type AnalysisId,
   type AnalyzerVersion,
@@ -22,6 +24,8 @@ import {
   type RoutePattern,
   type ScreenId,
   type StateId,
+  type TestCaseKey,
+  type TestImportId,
   type TransitionId,
   type TransitionTarget,
   type Trigger,
@@ -100,6 +104,15 @@ export function runId(args: { snapshotId: SnapshotId; origin: Origin; session: S
   return parseRunId(
     derive('run', [args.snapshotId, args.origin, sessionKey(args.session), args.startedAt.toISOString()]),
   );
+}
+
+// The trace files are not part of the id: one report against one snapshot is one import.
+export function testImportId(args: { snapshotId: SnapshotId; sha256: string }): TestImportId {
+  return parseTestImportId(derive('imp', [args.snapshotId, args.sha256]));
+}
+
+export function testCaseKey(args: { file: string; titlePath: readonly string[]; project: string }): TestCaseKey {
+  return parseTestCaseKey(derive('tcs', [args.file, args.project, ...args.titlePath]));
 }
 
 // The link's name is left out: two anchors to the same href from the same page are one navigation.

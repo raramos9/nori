@@ -139,6 +139,46 @@ export interface MatchFailuresTable {
   created_at: string;
 }
 
+export interface TestImportsTable {
+  id: string;
+  snapshot_id: string;
+  environment: string;
+  report_original: string;
+  report_sealed: string;
+  report_sha256: string;
+  playwright_version: string;
+  report_started_at: string;
+  imported_at: string;
+  cases: string;
+}
+
+export interface TestMatchesTable {
+  snapshot_id: string;
+  import_id: string;
+  analysis_id: string;
+  created_at: string;
+}
+
+export interface TestStepMatchesTable {
+  snapshot_id: string;
+  import_id: string;
+  analysis_id: string;
+  case_key: string;
+  retry: number;
+  seq: number;
+  kind: string;
+  transition_id: string | null;
+  match: string;
+}
+
+export interface TestMatchFailuresTable {
+  snapshot_id: string;
+  import_id: string;
+  analysis_id: string;
+  error: string;
+  created_at: string;
+}
+
 export interface Database {
   applications: ApplicationsTable;
   snapshots: SnapshotsTable;
@@ -155,6 +195,10 @@ export interface Database {
   screen_matches: ScreenMatchesTable;
   transition_matches: TransitionMatchesTable;
   match_failures: MatchFailuresTable;
+  test_imports: TestImportsTable;
+  test_matches: TestMatchesTable;
+  test_step_matches: TestStepMatchesTable;
+  test_match_failures: TestMatchFailuresTable;
 }
 
 export type GraphDb = Kysely<Database>;
