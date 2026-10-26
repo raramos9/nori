@@ -30,7 +30,7 @@ const QUIET_WINDOW_MS = 500;
 const POLL_MS = 100;
 const LOCATOR_TIMEOUT_MS = 3_000;
 // macOS can wedge Chrome's main thread in an App Nap assertion, after which Chrome answers nothing,
-// not even Browser.close. A browser that misses a ping for this long is killed with its process group.
+// not even Browser.close.
 const WEDGE_CHECK_MS = 10_000;
 const CLOSE_GRACE_MS = 5_000;
 
@@ -308,8 +308,7 @@ export class RunRecorder {
 
 const MAC_CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
-// Playwright refuses a bare `YES` argument, so a wrapper hands Chrome `-NSAppSleepDisabled YES`, which
-// keeps CoreFoundation from taking the App Nap assertion that can wedge Chrome's main thread.
+// Playwright refuses a bare `YES` argument.
 async function appNapDisabledChrome(): Promise<string | undefined> {
   if (process.platform !== 'darwin' || !existsSync(MAC_CHROME)) return undefined;
   const wrapper = join(tmpdir(), 'nori-chrome-no-app-nap.sh');
