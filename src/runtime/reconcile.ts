@@ -154,6 +154,23 @@ type Target =
     }
   | { readonly kind: 'not-a-screen'; readonly url: PageUrl; readonly why: NotAScreen };
 
+export type ClientStep = {
+  readonly from: PageUrl;
+  readonly chain: NonEmpty<PageUrl>;
+  readonly triggers: NonEmpty<Trigger['kind']>;
+};
+
+// What the static side says about one client navigation. There are no status checks and nothing is
+// created here; those are each caller's policy. runtime-only names the transition one trigger would mint.
+export type ClientStepMatch =
+  | { readonly kind: 'not-a-screen'; readonly end: 'source' | 'target'; readonly url: PageUrl; readonly why: NotAScreen }
+  | { readonly kind: 'matched'; readonly transitionId: TransitionId; readonly search: TargetSearch }
+  | { readonly kind: 'ambiguous'; readonly candidates: NonEmpty<TransitionId>; readonly search: TargetSearch }
+  | { readonly kind: 'runtime-only'; readonly transition: RuntimeOnlyTransition; readonly search: TargetSearch }
+  | { readonly kind: 'unknown-trigger'; readonly search: TargetSearch };
+
+export type Reconciler = { readonly matchClientStep: (step: ClientStep) => ClientStepMatch };
+
 const byId = <T extends { readonly id: string }>(a: T, b: T) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 function reconciler(staticSide: StaticSide) {
@@ -207,7 +224,40 @@ function reconciler(staticSide: StaticSide) {
       return id === undefined ? [] : [id];
     });
 
-  return { resolve, stateOf, targetOf, staticMatch };
+  const matchClientStep = ({ from, chain, triggers }: ClientStep): ClientStepMatch => {
+    const source = resolve(from);
+    if (source.kind === 'not-a-screen') return { kind: 'not-a-screen', end: 'source', url: from, why: source.why };
+    const target = targetOf(chain, 0);
+    if (target.kind === 'not-a-screen') return { kind: 'not-a-screen', end: 'target', url: target.url, why: target.why };
+    const search: TargetSearch = {
+      sourceUrl: from,
+      sourcePattern: source.pattern,
+      targetUrl: target.url,
+      targetPattern: target.pattern,
+      skipped: target.skipped,
+      triggerCandidates: triggers,
+    };
+    const [first, ...others] = staticMatch(source.pattern, triggers, target.pattern);
+    if (first !== undefined && others.length === 0) return { kind: 'matched', transitionId: first, search };
+    if (first !== undefined) return { kind: 'ambiguous', candidates: [first, ...others], search };
+    const [trigger, ...otherTriggers] = triggers;
+    if (otherTriggers.length > 0) return { kind: 'unknown-trigger', search };
+    const sourceStateId = stateOf(source.pattern);
+    const transitionTarget = { kind: 'resolved', stateId: stateOf(target.pattern) } as const;
+    const id = transitionId({ sourceStateId, trigger: { kind: trigger }, target: transitionTarget });
+    return {
+      kind: 'runtime-only',
+      transition: { id, sourceStateId, trigger: { kind: trigger }, target: transitionTarget },
+      search,
+    };
+  };
+
+  return { resolve, targetOf, staticMatch, matchClientStep };
+}
+
+export function createReconciler(staticSide: StaticSide): Reconciler {
+  const { matchClientStep } = reconciler(staticSide);
+  return { matchClientStep };
 }
 
 type Matched = { readonly transitionId: TransitionId; readonly match: TransitionMatch };
@@ -225,7 +275,7 @@ export function reconcileRun({ staticSide, validated }: { staticSide: StaticSide
   if (validated.run.snapshotId !== snapshot.id) {
     throw new Error(`Run ${validated.run.id} belongs to snapshot ${validated.run.snapshotId}, not ${snapshot.id}`);
   }
-  const { resolve, stateOf, targetOf, staticMatch } = reconciler(staticSide);
+  const { resolve, targetOf, staticMatch, matchClientStep } = reconciler(staticSide);
   const report: StepOutcome[] = [];
 
   const captures = [...validated.captures].sort(byId).map((evidence) => {
@@ -276,47 +326,34 @@ export function reconcileRun({ staticSide, validated }: { staticSide: StaticSide
     if (navigation.start.kind === 'action') {
       const step = { kind: 'action', seq } as const;
       const { from: S, action } = navigation.start;
-      const source = resolve(S.url);
-      const triggers = triggerCandidates(action);
-      const target = targetOf(chain, 0);
-      if (source.kind === 'not-a-screen') {
-        steps.push(ignored(step, { kind: 'not-a-screen', url: S.url, why: source.why }));
+      const client = matchClientStep({ from: S.url, chain, triggers: triggerCandidates(action) });
+      if (client.kind === 'not-a-screen' && client.end === 'source') {
+        steps.push(ignored(step, { kind: 'not-a-screen', url: client.url, why: client.why }));
       } else if (S.httpStatus >= 400) {
         steps.push(ignored(step, { kind: 'source-not-rendered', url: S.url, httpStatus: S.httpStatus }));
       } else if (L.httpStatus >= 400) {
         steps.push(ignored(step, { kind: 'landing-error', url: L.url, httpStatus: L.httpStatus }));
-      } else if (target.kind === 'not-a-screen') {
-        steps.push(ignored(step, { kind: 'not-a-screen', url: target.url, why: target.why }));
+      } else if (client.kind === 'not-a-screen') {
+        steps.push(ignored(step, { kind: 'not-a-screen', url: client.url, why: client.why }));
+      } else if (client.kind === 'matched') {
+        steps.push({
+          outcome: { step, kind: 'supports', subject: client.transitionId },
+          matched: {
+            transitionId: client.transitionId,
+            match: { ...client.search, verdict: 'supports', rule: 'action-matched-static' },
+          },
+        });
+      } else if (client.kind === 'ambiguous') {
+        steps.push(ignored(step, { kind: 'ambiguous-trigger', candidates: client.candidates }));
+      } else if (client.kind === 'runtime-only') {
+        const { transition } = client;
+        steps.push({
+          outcome: { step, kind: 'created', subject: transition.id },
+          matched: { transitionId: transition.id, match: { ...client.search, verdict: 'supports', rule: 'action-runtime-only' } },
+          created: transition,
+        });
       } else {
-        const search: TargetSearch = {
-          sourceUrl: S.url,
-          sourcePattern: source.pattern,
-          targetUrl: target.url,
-          targetPattern: target.pattern,
-          skipped: target.skipped,
-          triggerCandidates: triggers,
-        };
-        const [first, ...others] = staticMatch(source.pattern, triggers, target.pattern);
-        const [trigger, ...otherTriggers] = triggers;
-        if (first !== undefined && others.length === 0) {
-          steps.push({
-            outcome: { step, kind: 'supports', subject: first },
-            matched: { transitionId: first, match: { ...search, verdict: 'supports', rule: 'action-matched-static' } },
-          });
-        } else if (first !== undefined) {
-          steps.push(ignored(step, { kind: 'ambiguous-trigger', candidates: [first, ...others] }));
-        } else if (otherTriggers.length === 0) {
-          const sourceStateId = stateOf(source.pattern);
-          const transitionTarget = { kind: 'resolved', stateId: stateOf(target.pattern) } as const;
-          const id = transitionId({ sourceStateId, trigger: { kind: trigger }, target: transitionTarget });
-          steps.push({
-            outcome: { step, kind: 'created', subject: id },
-            matched: { transitionId: id, match: { ...search, verdict: 'supports', rule: 'action-runtime-only' } },
-            created: { id, sourceStateId, trigger: { kind: trigger }, target: transitionTarget },
-          });
-        } else {
-          steps.push(ignored(step, { kind: 'unknown-trigger' }));
-        }
+        steps.push(ignored(step, { kind: 'unknown-trigger' }));
       }
     }
 
