@@ -106,6 +106,11 @@ describe('route-added-edge-removed fixture', () => {
     const diff = diffOf(base, head);
     expect(diff.changes.every((change) => change.kind === 'added' || change.kind === 'removed')).toBe(true);
     expect(diff.gaps).toEqual([]);
+    const planned = new Set([...keys(expected.edges.added), ...keys(expected.edges.removed)]);
+    const transitionPairs = diff.changes.flatMap(({ subject }) =>
+      subject.kind !== 'transition' ? [] : [subject.to.kind === 'route' ? pairKey({ from: subject.from, to: subject.to.pattern }) : subject.to.expression],
+    );
+    expect(transitionPairs.filter((pair) => !planned.has(pair))).toEqual([]);
   });
 
   it('finds nothing against itself', () => {
