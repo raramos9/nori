@@ -303,11 +303,11 @@ export async function readZip({
     const located = await locate(handle, entries, end);
     const selected = located.filter(({ name }) => select(name));
     let total = 0;
+    // Deflate output is never much smaller than a valid input, so the output bound also bounds the read.
     for (const entry of selected) {
-      if (entry.uncompressedSize > LIMITS.entryBytes) {
-        reject({ kind: 'entry-too-large', entry: entry.name, bytes: entry.uncompressedSize });
-      }
-      total += entry.uncompressedSize;
+      const bytes = Math.max(entry.compressedSize, entry.uncompressedSize);
+      if (bytes > LIMITS.entryBytes) reject({ kind: 'entry-too-large', entry: entry.name, bytes });
+      total += bytes;
       if (total > LIMITS.totalBytes) reject({ kind: 'total-too-large', bytes: total });
     }
     for (const entry of selected) {

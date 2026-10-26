@@ -199,6 +199,11 @@ describe('readZip on hostile archives', () => {
     expect((await read(bytes)).result).toEqual(rejected({ kind: 'entry-too-large', entry: 'test.trace', bytes: LIMITS.entryBytes + 1 }));
   });
 
+  it('rejects a selected entry whose compressed size is over the entry limit before reading it', async () => {
+    const bytes = zip([{ ...trace(), declaredSize: 10, crc: 0, compressed: Buffer.alloc(LIMITS.entryBytes + 1) }]);
+    expect((await read(bytes)).result).toEqual(rejected({ kind: 'entry-too-large', entry: 'test.trace', bytes: LIMITS.entryBytes + 1 }));
+  });
+
   it('rejects selected entries whose declared sizes add up past the total limit', async () => {
     const declared = LIMITS.entryBytes;
     const count = LIMITS.totalBytes / declared + 1;
