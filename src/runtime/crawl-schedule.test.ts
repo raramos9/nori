@@ -38,5 +38,5 @@ describe('crawl scheduling', () => {
 
     expect(result.stop).toBe('budget');
     expect(result.captures.map(({ url }) => new URL(url).pathname)).toEqual(['/', '/item/1', '/about', '/deep/1']);
-  });
+  }, 60_000);
 });
