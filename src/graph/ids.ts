@@ -83,7 +83,7 @@ export function transitionId(args: {
   );
 }
 
-function sessionKey(session: Session): string {
+export function sessionKey(session: Session): string {
   switch (session.kind) {
     case 'anonymous':
       return session.kind;

@@ -463,6 +463,8 @@ describe('record runs', () => {
     const first = await record(side());
     expect(first.runs).toEqual([{ kind: 'failed', runId: expect.any(String), reason: expect.stringMatching(/names capture 7/) }]);
     expect(first.graph.screens).toHaveLength(2);
+    expect(first.graph.unmatchedRuns).toEqual(first.runs.flatMap((run) => (run.kind === 'failed' ? [run.runId] : [])));
+    expect(first.graph.runs).toEqual([]);
 
     writeFileSync(join(sealed, CRAWL_FILE), 'not json');
     expect((await record(side())).runs).toEqual(first.runs);

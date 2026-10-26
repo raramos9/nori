@@ -400,6 +400,7 @@ export type BuildGraph = {
   readonly snapshot: Snapshot;
   readonly analysis: Analysis;
   readonly runs: readonly Run[];
+  readonly unmatchedRuns: readonly RunId[];
   readonly screens: readonly LoadedScreen[];
   readonly transitions: readonly LoadedTransition[];
 };

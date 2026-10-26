@@ -113,6 +113,14 @@ export async function loadBuild(db: Db, analysisId: AnalysisId): Promise<BuildGr
       .orderBy('runs.id')
       .execute();
     const runs = runRows.map(parseRun);
+    const unmatchedRuns = (
+      await trx
+        .selectFrom('match_failures')
+        .select('sealed_run_id')
+        .where('analysis_id', '=', analysisId)
+        .orderBy('sealed_run_id')
+        .execute()
+    ).map((row) => parseRunId(row.sealed_run_id));
     const runById = new Map(runs.map((run) => [run.id as string, run]));
     const runOf = (id: string): Run => {
       const run = runById.get(id);
@@ -236,7 +244,7 @@ export async function loadBuild(db: Db, analysisId: AnalysisId): Promise<BuildGr
       return { transition, observations, status: deriveEvidenceStatus(observations) };
     });
 
-    return { application, snapshot, analysis, runs, screens, transitions };
+    return { application, snapshot, analysis, runs, unmatchedRuns, screens, transitions };
   });
 }
 
