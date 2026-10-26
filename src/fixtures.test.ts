@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { analyze } from './commands/scan.js';
-import { screenId, stateId } from './graph/ids.js';
-import { DEFAULT_STATE_KEY, type StateId, type StaticIngestion } from './graph/model.js';
+import type { StaticIngestion } from './graph/model.js';
+import { pairKey, patternsByState, resolvedPairs } from './testing/resolved-pairs.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
 
@@ -18,30 +18,6 @@ const expectedSchema = z.object({
   open: z.array(z.object({ from: z.string(), why: z.string() })),
   adapterEdges: z.array(adapterEdge).default([]),
 });
-
-const pairKey = ({ from, to }: { from: string; to: string }) => `${from} -> ${to}`;
-
-function patternsByState({ application, screens }: StaticIngestion): Map<StateId, string> {
-  return new Map(
-    screens.map((screen) => [
-      stateId({ screenId: screenId({ applicationId: application.id, routePattern: screen.routePattern }), key: DEFAULT_STATE_KEY }),
-      screen.routePattern,
-    ]),
-  );
-}
-
-function resolvedPairs(ingestion: StaticIngestion): Set<string> {
-  const patterns = patternsByState(ingestion);
-  const pairs = new Set<string>();
-  for (const { sourceStateId, target } of ingestion.transitions) {
-    if (target.kind !== 'resolved') continue;
-    const from = patterns.get(sourceStateId);
-    const to = patterns.get(target.stateId);
-    if (from === undefined || to === undefined) throw new Error('transition points at an unknown state');
-    pairs.add(pairKey({ from, to }));
-  }
-  return pairs;
-}
 
 const CREATED_AT = new Date('2026-01-01T00:00:00Z');
 

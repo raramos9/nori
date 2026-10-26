@@ -1,0 +1,15 @@
+{
+  "screens": { "added": ["/changelog"], "removed": [] },
+  "edges": {
+    "added": [
+      { "from": "/changelog", "to": "/" },
+      { "from": "/changelog", "to": "/about" },
+      { "from": "/changelog", "to": "/dashboard" },
+      { "from": "/changelog", "to": "/docs" },
+      { "from": "/changelog", "to": "/login" },
+      { "from": "/changelog", "to": "/pricing" },
+      { "from": "/changelog", "to": "/signup" }
+    ],
+    "removed": [{ "from": "/settings/billing", "to": "/pricing" }]
+  }
+}
