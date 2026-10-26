@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  parseAppKey,
   parseApplicationId,
   parseRunId,
   parseBuildId,
@@ -7,6 +8,7 @@ import {
   parseScreenId,
   parseStateId,
   parseTransitionId,
+  type AppKey,
   type ApplicationId,
   type BuildId,
   type CommitSha,
@@ -35,6 +37,10 @@ function derive(prefix: string, parts: readonly Part[]): string {
 
 export function applicationId({ rootPath }: { rootPath: string }): ApplicationId {
   return parseApplicationId(derive('app', [rootPath]));
+}
+
+export function appKey({ repoIdentity, subpath }: { repoIdentity: string; subpath: string }): AppKey {
+  return parseAppKey(derive('app', ['app-key/1', repoIdentity, subpath]));
 }
 
 export function buildId(args: {

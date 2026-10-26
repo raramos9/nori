@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { errorCode, NoriError } from '../errors.js';
 import { parseCommitSha, type CommitSha } from '../graph/model.js';
@@ -53,6 +54,28 @@ async function runGitOrThrow({
 export async function assertInsideWorkTree({ root }: { root: string }): Promise<void> {
   const result = await runGit({ cwd: root, args: ['rev-parse', '--is-inside-work-tree'] });
   if (result.kind === 'failed') throw new NoriError(`${root} is not inside a git repository`);
+}
+
+export async function showPrefix({ root }: { root: string }): Promise<string> {
+  const stdout = await runGitOrThrow({
+    root,
+    args: ['rev-parse', '--show-prefix'],
+    failure: 'git could not read the path prefix',
+  });
+  return stdout.trim().replace(/\/$/, '');
+}
+
+// Always absolute: git prints it relative to `root` for a main worktree.
+export async function gitCommonDir({ root }: { root: string }): Promise<string | null> {
+  const result = await runGit({ cwd: root, args: ['rev-parse', '--git-common-dir'] });
+  return result.kind === 'ok' ? resolve(root, result.stdout.trim()) : null;
+}
+
+export async function originUrl({ root }: { root: string }): Promise<string | null> {
+  const result = await runGit({ cwd: root, args: ['remote', 'get-url', 'origin'] });
+  if (result.kind === 'failed') return null;
+  const url = result.stdout.trim();
+  return url === '' ? null : url;
 }
 
 export async function workTreeTop({ root }: { root: string }): Promise<string | null> {

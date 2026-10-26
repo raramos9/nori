@@ -4,6 +4,7 @@ import type { Redirect, RunStop, RuntimeAction } from '../runtime/crawl-result.j
 type Brand<Name extends string> = string & { readonly __brand: Name };
 
 export type ApplicationId = Brand<'ApplicationId'>;
+export type AppKey = Brand<'AppKey'>;
 export type BuildId = Brand<'BuildId'>;
 export type ScreenId = Brand<'ScreenId'>;
 export type StateId = Brand<'StateId'>;
@@ -35,6 +36,7 @@ function idParser<B extends string>(name: string, prefix: string): (value: strin
 }
 
 export const parseApplicationId = idParser<ApplicationId>('ApplicationId', 'app');
+export const parseAppKey = idParser<AppKey>('AppKey', 'app');
 export const parseBuildId = idParser<BuildId>('BuildId', 'bld');
 export const parseScreenId = idParser<ScreenId>('ScreenId', 'scr');
 export const parseStateId = idParser<StateId>('StateId', 'sta');
