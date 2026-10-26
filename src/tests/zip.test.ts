@@ -1,0 +1,300 @@
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { crc32, deflateRawSync } from 'node:zlib';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { TraceRejection } from '../graph/model.js';
+import { copyUntrusted, LIMITS, readZip, type ZipRead } from './zip.js';
+
+const ARTIFACTS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'demo', 'e2e', 'artifacts');
+const FIXTURE_ZIPS = ['home-to-docs', 'pricing-to-signup'].map((slug) => join(ARTIFACTS, 'traces', slug, 'trace.zip'));
+
+const STORED = 0;
+const DEFLATED = 8;
+const DATA_DESCRIPTOR = 0x0008;
+
+type Spec = {
+  readonly name: string;
+  readonly data: Buffer;
+  readonly method?: number;
+  readonly flags?: number;
+  readonly descriptor?: boolean;
+  readonly localName?: string;
+  readonly declaredSize?: number;
+  readonly crc?: number;
+  readonly centralSizes?: number;
+  readonly compressed?: Buffer;
+};
+
+type Layout = {
+  readonly central?: (index: number, header: Buffer) => void;
+  readonly end?: (record: Buffer) => void;
+  readonly zip64Locator?: boolean;
+  readonly extraCentral?: readonly Buffer[];
+};
+
+function u16(value: number): Buffer {
+  const buffer = Buffer.alloc(2);
+  buffer.writeUInt16LE(value);
+  return buffer;
+}
+
+function u32(value: number): Buffer {
+  const buffer = Buffer.alloc(4);
+  buffer.writeUInt32LE(value);
+  return buffer;
+}
+
+function localHeader(spec: Spec, compressed: Buffer): Buffer {
+  const name = Buffer.from(spec.localName ?? spec.name);
+  const zeroed = spec.descriptor === true;
+  return Buffer.concat([
+    u32(0x04034b50),
+    u16(20),
+    u16((spec.flags ?? 0) | (zeroed ? DATA_DESCRIPTOR : 0)),
+    u16(spec.method ?? DEFLATED),
+    u16(0),
+    u16(0),
+    u32(zeroed ? 0 : (spec.crc ?? crc32(spec.data))),
+    u32(zeroed ? 0 : compressed.length),
+    u32(zeroed ? 0 : (spec.declaredSize ?? spec.data.length)),
+    u16(name.length),
+    u16(0),
+    name,
+  ]);
+}
+
+function centralHeader(spec: Spec, compressed: Buffer, offset: number): Buffer {
+  const name = Buffer.from(spec.name);
+  return Buffer.concat([
+    u32(0x02014b50),
+    u16(20),
+    u16(20),
+    u16((spec.flags ?? 0) | (spec.descriptor === true ? DATA_DESCRIPTOR : 0)),
+    u16(spec.method ?? DEFLATED),
+    u16(0),
+    u16(0),
+    u32(spec.crc ?? crc32(spec.data)),
+    u32(spec.centralSizes ?? compressed.length),
+    u32(spec.centralSizes ?? spec.declaredSize ?? spec.data.length),
+    u16(name.length),
+    u16(0),
+    u16(0),
+    u16(0),
+    u16(0),
+    u32(0),
+    u32(offset),
+    name,
+  ]);
+}
+
+function compress(spec: Spec): Buffer {
+  return spec.compressed ?? ((spec.method ?? DEFLATED) === DEFLATED ? deflateRawSync(spec.data) : spec.data);
+}
+
+function zip(specs: readonly Spec[], layout: Layout = {}): Buffer {
+  const locals: Buffer[] = [];
+  const centrals: Buffer[] = [];
+  let offset = 0;
+  specs.forEach((spec, index) => {
+    const compressed = compress(spec);
+    const descriptor = spec.descriptor === true
+      ? Buffer.concat([u32(0x08074b50), u32(crc32(spec.data)), u32(compressed.length), u32(spec.data.length)])
+      : Buffer.alloc(0);
+    const local = Buffer.concat([localHeader(spec, compressed), compressed, descriptor]);
+    const central = centralHeader(spec, compressed, offset);
+    layout.central?.(index, central);
+    locals.push(local);
+    centrals.push(central);
+    offset += local.length;
+  });
+  centrals.push(...(layout.extraCentral ?? []));
+  const cd = Buffer.concat(centrals);
+  const locator = layout.zip64Locator === true ? Buffer.concat([u32(0x07064b50), Buffer.alloc(16)]) : Buffer.alloc(0);
+  const end = Buffer.concat([
+    u32(0x06054b50),
+    u16(0),
+    u16(0),
+    u16(centrals.length),
+    u16(centrals.length),
+    u32(cd.length),
+    u32(offset),
+    u16(0),
+  ]);
+  layout.end?.(end);
+  return Buffer.concat([...locals, cd, locator, end]);
+}
+
+const text = (value: string) => Buffer.from(value);
+const trace = (data = '{"type":"context-options","version":10}\n') => ({ name: 'test.trace', data: text(data) });
+
+function fifield(): Buffer {
+  const inner: Spec = { name: 'b.trace', data: text('payload'), method: STORED };
+  const innerLocal = Buffer.concat([localHeader(inner, inner.data), inner.data]);
+  const outer: Spec = { name: 'a.trace', data: innerLocal, method: STORED };
+  const outerHeader = localHeader(outer, innerLocal);
+  return zip([outer], { extraCentral: [centralHeader(inner, inner.data, outerHeader.length)] });
+}
+
+let parent: string;
+let staging: string;
+
+beforeEach(() => {
+  parent = realpathSync(mkdtempSync(join(tmpdir(), 'nori-zip-')));
+  staging = join(parent, 'staging');
+  mkdirSync(staging);
+});
+afterEach(() => rmSync(parent, { recursive: true, force: true }));
+
+async function read(bytes: Buffer, select: (name: string) => boolean = (name) => name.endsWith('.trace')) {
+  const file = join(staging, 'trace.zip');
+  writeFileSync(file, bytes);
+  const visited: { name: string; bytes: Buffer }[] = [];
+  const result = await readZip({ file, select, visit: (name, data) => (visited.push({ name, bytes: data }), null) });
+  expect(readdirSync(parent)).toEqual(['staging']);
+  expect(readdirSync(staging)).toEqual(['trace.zip']);
+  return { result, visited };
+}
+
+const rejected = (why: TraceRejection): ZipRead => ({ kind: 'rejected', why });
+
+describe('readZip on hostile archives', () => {
+  const bomb = Buffer.alloc(10 * 1024 * 1024);
+  const cases: readonly [string, () => Buffer, ZipRead][] = [
+    ['a bomb declared small that inflates large', () => zip([{ name: 'test.trace', data: bomb, declaredSize: 100, crc: 0 }]), rejected({ kind: 'size-mismatch', entry: 'test.trace' })],
+    ['20k entries', () => zip(Array.from({ length: 20_000 }, (_, i) => ({ name: `resources/${i}`, data: text('x'), method: STORED }))), rejected({ kind: 'too-many-entries', count: 20_000 })],
+    ['a ../ name', () => zip([trace(), { name: '../../etc/passwd', data: text('x') }]), rejected({ kind: 'unsafe-name', entry: '../../etc/passwd' })],
+    ['a nested .. segment', () => zip([{ name: 'resources/../../x', data: text('x') }]), rejected({ kind: 'unsafe-name', entry: 'resources/../../x' })],
+    ['an absolute name', () => zip([{ name: '/etc/passwd', data: text('x') }]), rejected({ kind: 'unsafe-name', entry: '/etc/passwd' })],
+    ['a backslash name', () => zip([{ name: '..\\evil', data: text('x') }]), rejected({ kind: 'unsafe-name', entry: '..\\evil' })],
+    ['a drive letter name', () => zip([{ name: 'C:/evil', data: text('x') }]), rejected({ kind: 'unsafe-name', entry: 'C:/evil' })],
+    ['a NUL in a name', () => zip([{ name: 'test.trace\u0000.png', data: text('x') }]), rejected({ kind: 'unsafe-name', entry: 'test.trace\u0000.png' })],
+    ['the encrypted bit', () => zip([{ ...trace(), flags: 0x0001 }]), rejected({ kind: 'encrypted' })],
+    ['a ZIP64 size sentinel', () => zip([{ ...trace(), centralSizes: 0xffffffff }]), rejected({ kind: 'zip64' })],
+    ['a ZIP64 end locator', () => zip([trace()], { zip64Locator: true }), rejected({ kind: 'zip64' })],
+    ['a ZIP64 entry count sentinel', () => zip([trace()], { end: (record) => record.writeUInt16LE(0xffff, 10) }), rejected({ kind: 'zip64' })],
+    ['a second disk', () => zip([trace()], { end: (record) => record.writeUInt16LE(1, 4) }), rejected({ kind: 'multi-disk' })],
+    ['a central directory running past the end record', () => zip([trace()], { end: (record) => record.writeUInt32LE(record.readUInt32LE(12) + 10, 12) }), rejected({ kind: 'truncated' })],
+    ['a central directory claiming more entries than it holds', () => zip([trace()], { end: (record) => { record.writeUInt16LE(2, 8); record.writeUInt16LE(2, 10); } }), rejected({ kind: 'truncated' })],
+    ['a file cut before its end record', () => zip([trace()]).subarray(0, 60), rejected({ kind: 'not-a-zip' })],
+    ['bytes that are not a zip', () => text('PK not really a zip, just text'), rejected({ kind: 'not-a-zip' })],
+    ['overlapping entries (Fifield)', fifield, rejected({ kind: 'overlapping-entries' })],
+    ['a local name that differs from the central one', () => zip([{ ...trace(), localName: 'other.trace' }]), rejected({ kind: 'header-mismatch', entry: 'test.trace' })],
+    ['duplicate names', () => zip([trace(), trace()]), rejected({ kind: 'duplicate-name', entry: 'test.trace' })],
+    ['an unsupported method', () => zip([{ ...trace(), method: 12 }]), rejected({ kind: 'unsupported-method', entry: 'test.trace', method: 12 })],
+    ['a stored entry whose sizes disagree', () => zip([{ ...trace(), method: STORED }], { central: (_, header) => header.writeUInt32LE(3, 24) }), rejected({ kind: 'size-mismatch', entry: 'test.trace' })],
+    ['a wrong CRC', () => zip([{ ...trace(), crc: 1 }]), rejected({ kind: 'crc-mismatch', entry: 'test.trace' })],
+    ['corrupt deflate data', () => zip([{ ...trace(), compressed: Buffer.from([0xff, 0xff, 0xff, 0xff]) }]), rejected({ kind: 'inflate-failed', entry: 'test.trace' })],
+    ['a method that differs between the local and central headers', () => zip([{ ...trace(), method: STORED }], { central: (_, header) => header.writeUInt16LE(DEFLATED, 10) }), rejected({ kind: 'header-mismatch', entry: 'test.trace' })],
+  ];
+
+  it.each(cases)('%s', async (_name, build, expected) => {
+    expect((await read(build())).result).toEqual(expected);
+  });
+
+  it('rejects a selected entry declared over the entry limit before inflating it', async () => {
+    const bytes = zip([trace()], { central: (_, header) => header.writeUInt32LE(LIMITS.entryBytes + 1, 24) });
+    expect((await read(bytes)).result).toEqual(rejected({ kind: 'entry-too-large', entry: 'test.trace', bytes: LIMITS.entryBytes + 1 }));
+  });
+
+  it('rejects selected entries whose declared sizes add up past the total limit', async () => {
+    const declared = LIMITS.entryBytes;
+    const count = LIMITS.totalBytes / declared + 1;
+    const bytes = zip(
+      Array.from({ length: count }, (_, i) => ({ name: `${i}-trace.trace`, data: text('x') })),
+      { central: (_, header) => header.writeUInt32LE(declared, 24) },
+    );
+    expect((await read(bytes)).result).toEqual(rejected({ kind: 'total-too-large', bytes: declared * count }));
+  });
+
+  it('never inflates an unselected entry, so a bomb in a resource costs nothing', async () => {
+    const bytes = zip([trace(), { name: 'resources/bomb', data: bomb, declaredSize: 1, crc: 0 }]);
+    const { result, visited } = await read(bytes);
+    expect(result).toEqual({ kind: 'read' });
+    expect(visited.map(({ name }) => name)).toEqual(['test.trace']);
+  });
+
+  it('reads an entry written with a data descriptor and zeroed local sizes', async () => {
+    const data = '{"type":"before","callId":"c@1"}\n'.repeat(50);
+    const { result, visited } = await read(zip([{ name: '1-trace.trace', data: text(data), descriptor: true }]));
+    expect(result).toEqual({ kind: 'read' });
+    expect(visited.map(({ name, bytes }) => [name, bytes.toString()])).toEqual([['1-trace.trace', data]]);
+  });
+
+  it('passes a rejection from visit through', async () => {
+    const file = join(staging, 'trace.zip');
+    writeFileSync(file, zip([trace()]));
+    const why: TraceRejection = { kind: 'bad-trace-line', entry: 'test.trace', line: 1 };
+    expect(await readZip({ file, select: () => true, visit: () => why })).toEqual(rejected(why));
+  });
+
+  it.each(FIXTURE_ZIPS)('reads the fixture %s', async (fixture) => {
+    const { result, visited } = await read(readFileSync(fixture));
+    expect(result).toEqual({ kind: 'read' });
+    expect(visited.map(({ name }) => name).sort()).toEqual(['0-trace.trace', '1-trace.trace', 'test.trace']);
+    expect(visited.find(({ name }) => name === '1-trace.trace')?.bytes.toString()).toContain('"type":"frame-snapshot"');
+  });
+});
+
+describe('copyUntrusted', () => {
+  let root: string;
+  let outside: string;
+
+  beforeEach(() => {
+    root = join(parent, 'repo');
+    outside = join(parent, 'elsewhere');
+    mkdirSync(join(root, 'test-results'), { recursive: true });
+    mkdirSync(outside);
+  });
+
+  const copy = (path: string) => copyUntrusted({ path, root, destination: join(staging, 'copy.zip') });
+
+  it('copies a regular file inside the root into staging', async () => {
+    const path = join(root, 'test-results', 'trace.zip');
+    writeFileSync(path, 'zip bytes');
+    expect(await copy(path)).toEqual({ kind: 'opened', copy: join(staging, 'copy.zip'), bytes: 9 });
+    expect(readFileSync(join(staging, 'copy.zip'), 'utf8')).toBe('zip bytes');
+  });
+
+  it('reports a missing file as missing, even outside the root', async () => {
+    expect(await copy(join(outside, 'gone.zip'))).toEqual({ kind: 'refused', reason: { kind: 'missing', path: join(outside, 'gone.zip') } });
+  });
+
+  it.each([
+    ['an absolute path elsewhere', () => join(outside, 'secret')],
+    ['a ../ escape', () => join(root, 'test-results', '..', '..', 'elsewhere', 'secret')],
+    ['a symlink out of the root', () => {
+      symlinkSync(join(outside, 'secret'), join(root, 'test-results', 'link.zip'));
+      return join(root, 'test-results', 'link.zip');
+    }],
+  ])('refuses %s without copying it', async (_name, pathOf) => {
+    writeFileSync(join(outside, 'secret'), 'private key');
+    const path = pathOf();
+    expect(await copy(path)).toEqual({ kind: 'refused', reason: { kind: 'outside-root', path, root } });
+    expect(readdirSync(staging)).toEqual([]);
+  });
+
+  it('refuses a FIFO without blocking and a directory', async () => {
+    const fifo = join(root, 'test-results', 'fifo');
+    execFileSync('mkfifo', [fifo]);
+    expect(await copy(fifo)).toEqual({ kind: 'refused', reason: { kind: 'not-a-file', path: fifo } });
+    expect(await copy(join(root, 'test-results'))).toEqual({
+      kind: 'refused',
+      reason: { kind: 'not-a-file', path: join(root, 'test-results') },
+    });
+    expect(readdirSync(staging)).toEqual([]);
+  });
+
+  it('refuses a file over the trace size limit before reading it', async () => {
+    const path = join(root, 'test-results', 'huge.zip');
+    writeFileSync(path, '');
+    truncateSync(path, LIMITS.traceFileBytes + 1);
+    expect(await copy(path)).toEqual({
+      kind: 'refused',
+      reason: { kind: 'too-large', path, bytes: LIMITS.traceFileBytes + 1, limit: LIMITS.traceFileBytes },
+    });
+    expect(readdirSync(staging)).toEqual([]);
+  });
+});
