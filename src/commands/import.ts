@@ -9,6 +9,7 @@ import {
   type LoadedTestImport,
   type TestAttempt,
   type TestCase,
+  type TestFailure,
   type TestImportId,
   type TestStep,
   type TestStepMatch,
@@ -43,6 +44,23 @@ function outcomeImportId(outcome: ImportOutcome): TestImportId {
       return _exhaustive;
     }
   }
+}
+
+// The report's errors are the attempt's failure. A trace's failing call locates one only when it is the
+// same error: the report prints the call's message, then the source snippet and location on later lines.
+// A call whose error the test caught failed nothing.
+function sameError(reported: string, traced: string): boolean {
+  if (traced === '' || !reported.startsWith(traced)) return false;
+  return reported.length === traced.length || traced.endsWith('\n') || reported[traced.length] === '\n';
+}
+
+function locate(errors: readonly string[], traced: readonly TestFailure[]): TestFailure[] {
+  const pending = [...traced];
+  return errors.map((message) => {
+    const index = pending.findIndex((failure) => sameError(message, failure.message));
+    const [found] = index === -1 ? [] : pending.splice(index, 1);
+    return { message, step: found?.step ?? null };
+  });
 }
 
 async function stageAttempt({
@@ -80,7 +98,7 @@ async function stageAttempt({
     retry: attempt.retry,
     status: attempt.status,
     trace: { kind: 'read', original: parseArtifactPath(attempt.trace), sealed: artifactPath(directory, file), steps },
-    failures: failed && failures.length > 0 ? failures : reportFailures,
+    failures: failed ? locate(attempt.errors, failures) : [],
   };
 }
 

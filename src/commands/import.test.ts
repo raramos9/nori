@@ -77,6 +77,44 @@ function rowCounts(graph: BuildGraph): Record<string, number> {
   }
 }
 
+const ORIGIN = 'http://127.0.0.1:3000';
+const STARTED = '2026-10-26T00:00:00.000Z';
+
+const mainFrame = (callId: string, path: string, timestamp: number) => ({
+  type: 'frame-snapshot',
+  snapshot: { callId, phase: 'after', pageId: 'p', isMainFrame: true, frameUrl: `${ORIGIN}${path}`, timestamp, html: [] },
+});
+
+function writeTrace(dir: string, name: string, entries: Record<string, readonly unknown[]>): string {
+  mkdirSync(join(dir, 'traces'), { recursive: true });
+  const path = join('traces', name);
+  writeFileSync(join(dir, path), zip(Object.entries(entries).map(([entry, lines]) => ({ name: entry, data: text(lines.map((line) => JSON.stringify(line)).join('\n')) }))));
+  return path;
+}
+
+const traceResult = (trace: string, overrides: Record<string, unknown> = {}) => ({
+  retry: 0,
+  status: 'passed',
+  startTime: STARTED,
+  attachments: [{ name: 'trace', contentType: 'application/zip', path: trace }],
+  ...overrides,
+});
+
+function writeReport(dir: string, specs: readonly { title: string; results: readonly unknown[]; status?: string }[]): string {
+  const path = join(dir, 'report.json');
+  const suite = {
+    title: 'a.spec.ts',
+    specs: specs.map(({ title, results, status = 'expected' }, line) => ({
+      title,
+      file: 'a.spec.ts',
+      line,
+      tests: [{ projectName: '', expectedStatus: 'passed', status, results }],
+    })),
+  };
+  writeFileSync(path, JSON.stringify({ config: { version: '1.64.0' }, suites: [suite], stats: { startTime: STARTED } }));
+  return path;
+}
+
 describe('nori import', () => {
   it(
     'imports one passing and one failing case, with the failure on / -> /docs only',
@@ -159,24 +197,18 @@ describe('nori import', () => {
     'seals and prints a trace whose selector and method carry escape sequences without a control character',
     async () => {
       const dir = scratchInRepo();
-      const origin = 'http://127.0.0.1:3000';
-      const lines = [
-        { type: 'context-options', version: 10, options: { baseURL: origin } },
-        { type: 'before', callId: 'c@1', startTime: 0, method: 'goto', params: { url: '/' } },
-        { type: 'frame-snapshot', snapshot: { callId: 'c@1', phase: 'after', pageId: 'p', isMainFrame: true, frameUrl: `${origin}/`, timestamp: 1, html: [] } },
-        { type: 'before', callId: 'c@2', startTime: 2, method: 'click\u001b[2J\u0007', params: {} },
-        { type: 'before', callId: 'c@3', startTime: 3, method: 'click', params: { selector: 'text=\u001b[2JDocs\u0007' } },
-        { type: 'frame-snapshot', snapshot: { callId: 'c@3', phase: 'after', pageId: 'p', isMainFrame: true, frameUrl: `${origin}/docs`, timestamp: 4, html: [] } },
-      ];
-      mkdirSync(join(dir, 'traces'));
-      writeFileSync(join(dir, 'traces', 'trace.zip'), zip([{ name: '1-trace.trace', data: text(lines.map((line) => JSON.stringify(line)).join('\n')) }]));
-      const result = { retry: 0, status: 'passed', startTime: '2026-10-26T00:00:00.000Z', attachments: [{ name: 'trace', contentType: 'application/zip', path: 'traces/trace.zip' }] };
-      const spec = { title: 'docs \u001b[31mred\u001b[39m', file: 'a.spec.ts', line: 1, tests: [{ projectName: '', expectedStatus: 'passed', status: 'expected', results: [result] }] };
-      writeFileSync(
-        join(dir, 'report.json'),
-        JSON.stringify({ config: { version: '1.64.0' }, suites: [{ title: 'a.spec.ts', specs: [spec] }], stats: { startTime: '2026-10-26T00:00:00.000Z' } }),
-      );
-      const report = await importReport({ reportPath: join(dir, 'report.json'), path: DEMO });
+      const trace = writeTrace(dir, 'trace.zip', {
+        '1-trace.trace': [
+          { type: 'context-options', version: 10, options: { baseURL: ORIGIN } },
+          { type: 'before', callId: 'c@1', startTime: 0, method: 'goto', params: { url: '/' } },
+          mainFrame('c@1', '/', 1),
+          { type: 'before', callId: 'c@2', startTime: 2, method: 'click\u001b[2J\u0007', params: {} },
+          { type: 'before', callId: 'c@3', startTime: 3, method: 'click', params: { selector: 'text=\u001b[2JDocs\u0007' } },
+          mainFrame('c@3', '/docs', 4),
+        ],
+      });
+      const reportPath = writeReport(dir, [{ title: 'docs \u001b[31mred\u001b[39m', results: [traceResult(trace)] }]);
+      const report = await importReport({ reportPath, path: DEMO });
       const printed = formatImport(report);
       expect(printed).toContain('/ -> /docs');
       expect(printed).not.toMatch(CONTROL);
@@ -184,6 +216,35 @@ describe('nori import', () => {
       const sealed = readFileSync(join(dirname(loaded?.testImport.report.sealed ?? ''), IMPORT_FILE), 'utf8');
       expect(JSON.parse(sealed).cases[0].attempts[0].trace.steps[1].cause).toMatchObject({ method: 'click', selector: 'text=Docs' });
       expect(JSON.stringify(JSON.parse(sealed))).not.toMatch(/\\u00(?:0[0-8]|1[0-9a-f]|7f|[89][0-9a-f])/);
+    },
+    SLOW,
+  );
+
+  it(
+    'keeps the test failure when a caught call failed earlier, and does not locate it',
+    async () => {
+      const dir = scratchInRepo();
+      const trace = writeTrace(dir, 'caught.zip', {
+        'test.trace': [
+          { type: 'before', callId: 'c@1', startTime: 0, method: 'pw:api' },
+          { type: 'after', callId: 'c@1', endTime: 1 },
+          { type: 'before', callId: 'c@2', startTime: 2, method: 'pw:api' },
+          { type: 'after', callId: 'c@2', endTime: 4, error: { message: 'TimeoutError: locator.click: Timeout 100ms exceeded.' } },
+        ],
+        '1-trace.trace': [
+          { type: 'context-options', version: 10, options: { baseURL: ORIGIN } },
+          { type: 'before', callId: 'c@1', startTime: 0, method: 'goto', params: { url: '/' } },
+          mainFrame('c@1', '/', 1),
+          { type: 'before', callId: 'c@2', startTime: 2, method: 'click', params: { selector: '#x' } },
+          mainFrame('c@2', '/', 3),
+        ],
+      });
+      const reportPath = writeReport(dir, [
+        { title: 'boom', status: 'unexpected', results: [traceResult(trace, { status: 'failed', error: { message: 'Error: boom' } })] },
+      ]);
+      const report = await importReport({ reportPath, path: DEMO });
+      expect(caseTitled(report.graph, 'boom').attempts[0]?.failures).toEqual([{ message: 'Error: boom', step: null }]);
+      expect(formatImport(report)).toContain('failed: boom (not located on a transition)');
     },
     SLOW,
   );
