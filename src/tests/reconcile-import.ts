@@ -39,9 +39,8 @@ function matchStep(reconciler: Reconciler, step: TestStep): TestStepMatch {
     if (url === null) return { kind: 'off-origin', url: raw };
     rest.push(url);
   }
-  const chain: NonEmpty<PageUrl> = [landing, ...rest];
   const triggers = cause.anchor === null ? OPEN_TRIGGERS : triggerCandidates({ kind: 'follow-link', href: cause.anchor, name: null });
-  const client = reconciler.matchClientStep({ from, chain, triggers });
+  const client = reconciler.matchClientStep({ from, chain: [landing, ...rest], triggers });
   switch (client.kind) {
     case 'not-a-screen':
       return { kind: 'not-a-screen', url: client.url, why: client.why };
@@ -51,14 +50,8 @@ function matchStep(reconciler: Reconciler, step: TestStep): TestStepMatch {
       return { kind: 'walked-runtime-only', transitionId: client.transition.id, search: client.search };
     case 'ambiguous':
       return { kind: 'ambiguous', candidates: client.candidates, search: client.search };
-    case 'unknown-trigger': {
-      // A crawl mints a runtime-only transition only for a followed link, so that is the id a walk the
-      // crawl also saw carries.
-      const minted = reconciler.matchClientStep({ from, chain, triggers: ['link'] });
-      return minted.kind === 'runtime-only'
-        ? { kind: 'walked-runtime-only', transitionId: minted.transition.id, search: client.search }
-        : { kind: 'no-transition', search: client.search };
-    }
+    case 'unknown-trigger':
+      return { kind: 'no-transition', search: client.search };
     default: {
       const _exhaustive: never = client;
       return _exhaustive;
