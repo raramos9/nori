@@ -462,6 +462,7 @@ export type TracelessReason =
   | { readonly kind: 'outside-root'; readonly path: string; readonly root: string }
   | { readonly kind: 'not-a-file'; readonly path: string }
   | { readonly kind: 'too-large'; readonly path: string; readonly bytes: number; readonly limit: number }
+  | { readonly kind: 'over-budget'; readonly path: string; readonly bytes: number; readonly limit: number }
   | { readonly kind: 'unreadable'; readonly path: string; readonly why: TraceRejection };
 
 // Every way the untrusted trace bytes can be refused.

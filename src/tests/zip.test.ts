@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { TraceRejection } from '../graph/model.js';
 import { centralHeader, DEFLATED, localHeader, STORED, text, trace, zip, type Spec } from '../testing/zip-builder.js';
 import { LIMITS } from './limits.js';
-import { copyUntrusted, readZip, type ZipRead } from './zip.js';
+import { createCopier, readZip, type ZipRead } from './zip.js';
 
 const ARTIFACTS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'demo', 'e2e', 'artifacts');
 const FIXTURE_ZIPS = ['home-to-docs', 'pricing-to-signup'].map((slug) => join(ARTIFACTS, 'traces', slug, 'trace.zip'));
@@ -135,7 +135,7 @@ describe('readZip on hostile archives', () => {
   });
 });
 
-describe('copyUntrusted', () => {
+describe('createCopier', () => {
   let root: string;
   let outside: string;
 
@@ -146,7 +146,7 @@ describe('copyUntrusted', () => {
     mkdirSync(outside);
   });
 
-  const copy = (path: string) => copyUntrusted({ path, root, destination: join(staging, 'copy.zip') });
+  const copy = (path: string) => createCopier({ root }).copy(path, join(staging, 'copy.zip'));
 
   it('copies a regular file inside the root into staging', async () => {
     const path = join(root, 'test-results', 'trace.zip');
@@ -193,5 +193,29 @@ describe('copyUntrusted', () => {
       reason: { kind: 'too-large', path, bytes: LIMITS.traceFileBytes + 1, limit: LIMITS.traceFileBytes },
     });
     expect(readdirSync(staging)).toEqual([]);
+  });
+
+  it('copies one file once however many paths name it', async () => {
+    const path = join(root, 'test-results', 'trace.zip');
+    writeFileSync(path, 'zip bytes');
+    symlinkSync(path, join(root, 'test-results', 'alias.zip'));
+    const copier = createCopier({ root });
+    const first = await copier.copy(path, join(staging, 'a.zip'));
+    expect(await copier.copy(path, join(staging, 'b.zip'))).toEqual(first);
+    expect(await copier.copy(join(root, 'test-results', 'alias.zip'), join(staging, 'c.zip'))).toEqual(first);
+    expect(readdirSync(staging)).toEqual(['a.zip']);
+  });
+
+  it('refuses a file past the import byte budget, counting earlier copies', async () => {
+    const [a, b] = ['a.zip', 'b.zip'].map((name) => join(root, 'test-results', name));
+    writeFileSync(a ?? '', '123456');
+    writeFileSync(b ?? '', '654321');
+    const copier = createCopier({ root, budget: 10 });
+    expect(await copier.copy(a ?? '', join(staging, 'a.zip'))).toMatchObject({ kind: 'opened', bytes: 6 });
+    expect(await copier.copy(b ?? '', join(staging, 'b.zip'))).toEqual({
+      kind: 'refused',
+      reason: { kind: 'over-budget', path: b, bytes: 6, limit: 10 },
+    });
+    expect(readdirSync(staging)).toEqual(['a.zip']);
   });
 });

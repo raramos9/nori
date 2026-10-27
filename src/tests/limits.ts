@@ -1,6 +1,7 @@
 // Every bound on what an untrusted report or trace may cost.
 export const LIMITS = {
   traceFileBytes: 1024 * 1024 * 1024,
+  importTraceBytes: 2 * 1024 * 1024 * 1024,
   centralDirectoryBytes: 16 * 1024 * 1024,
   entries: 10_000,
   entryBytes: 64 * 1024 * 1024,

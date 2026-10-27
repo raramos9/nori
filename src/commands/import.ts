@@ -21,8 +21,8 @@ import { record, type ImportOutcome } from '../runtime/record.js';
 import { sealCases } from '../store/test-rows.js';
 import { readReport, type ReportAttempt, type ReportCase } from '../tests/playwright-report.js';
 import { parseSealedImport, REPORT_FILE, sealImport, type SealedImportV1 } from '../tests/sealed-import.js';
-import { readTrace } from '../tests/trace.js';
-import { copyUntrusted } from '../tests/zip.js';
+import { readTrace, type TraceResult } from '../tests/trace.js';
+import { createCopier } from '../tests/zip.js';
 import type { Command } from './command.js';
 import { analyze } from './scan.js';
 import { currentEnvironment } from './verify.js';
@@ -63,42 +63,39 @@ function locate(errors: readonly string[], traced: readonly TestFailure[]): Test
   });
 }
 
-async function stageAttempt({
-  testCase,
-  attempt,
-  root,
-  staging,
-  directory,
-}: {
-  testCase: ReportCase;
-  attempt: ReportAttempt;
-  root: string;
-  staging: string;
-  directory: string;
-}): Promise<TestAttempt> {
-  const failed = attempt.status !== 'passed' && attempt.status !== 'skipped';
-  const reportFailures = failed ? attempt.errors.map((message) => ({ message, step: null })) : [];
-  const traceless = (reason: Extract<TraceLink, { kind: 'trace-less' }>['reason']): TestAttempt => ({
-    retry: attempt.retry,
-    status: attempt.status,
-    trace: { kind: 'trace-less', reason },
-    failures: reportFailures,
-  });
-  if (attempt.trace === null) return traceless({ kind: 'no-trace-attachment' });
-  const file = join(TRACES_DIR, `${testCase.key}-${attempt.retry}.zip`);
-  const copied = await copyUntrusted({ path: attempt.trace, root, destination: join(staging, file) });
-  if (copied.kind === 'refused') return traceless(copied.reason);
-  const read = await readTrace(copied.copy);
-  if (read.kind === 'rejected') {
-    await rm(copied.copy, { force: true });
-    return traceless({ kind: 'unreadable', path: attempt.trace, why: read.why });
-  }
-  const { steps, failures } = read.trace;
-  return {
-    retry: attempt.retry,
-    status: attempt.status,
-    trace: { kind: 'read', original: parseArtifactPath(attempt.trace), sealed: artifactPath(directory, file), steps },
-    failures: failed ? locate(attempt.errors, failures) : [],
+type Stager = (testCase: ReportCase, attempt: ReportAttempt) => Promise<TestAttempt>;
+
+// Attempts that name one trace file share its copy and its parsed trace, so a report cannot multiply
+// one large trace by its cases and retries.
+function createStager({ root, staging, directory }: { root: string; staging: string; directory: string }): Stager {
+  const copier = createCopier({ root });
+  const traces = new Map<string, TraceResult>();
+  return async (testCase, attempt) => {
+    const failed = attempt.status !== 'passed' && attempt.status !== 'skipped';
+    const reportFailures = failed ? attempt.errors.map((message) => ({ message, step: null })) : [];
+    const traceless = (reason: Extract<TraceLink, { kind: 'trace-less' }>['reason']): TestAttempt => ({
+      retry: attempt.retry,
+      status: attempt.status,
+      trace: { kind: 'trace-less', reason },
+      failures: reportFailures,
+    });
+    if (attempt.trace === null) return traceless({ kind: 'no-trace-attachment' });
+    const copied = await copier.copy(attempt.trace, join(staging, TRACES_DIR, `${testCase.key}-${attempt.retry}.zip`));
+    if (copied.kind === 'refused') return traceless(copied.reason);
+    let read = traces.get(copied.copy);
+    if (read === undefined) {
+      read = await readTrace(copied.copy);
+      traces.set(copied.copy, read);
+      if (read.kind === 'rejected') await rm(copied.copy, { force: true });
+    }
+    if (read.kind === 'rejected') return traceless({ kind: 'unreadable', path: attempt.trace, why: read.why });
+    const { steps, failures } = read.trace;
+    return {
+      retry: attempt.retry,
+      status: attempt.status,
+      trace: { kind: 'read', original: parseArtifactPath(attempt.trace), sealed: artifactPath(directory, relative(staging, copied.copy)), steps },
+      failures: failed ? locate(attempt.errors, failures) : [],
+    };
   };
 }
 
@@ -117,12 +114,11 @@ export async function importReport({ reportPath, path }: { reportPath: string; p
     try {
       await mkdir(join(staging, TRACES_DIR), { recursive: true, mode: 0o700 });
       await writeFile(join(staging, REPORT_FILE), report.bytes, { mode: 0o600 });
+      const stage = createStager({ root: analyzed.inputs.top, staging, directory });
       const cases: TestCase[] = [];
       for (const testCase of report.cases) {
         const attempts: TestAttempt[] = [];
-        for (const attempt of testCase.attempts) {
-          attempts.push(await stageAttempt({ testCase, attempt, root: analyzed.inputs.top, staging, directory }));
-        }
+        for (const attempt of testCase.attempts) attempts.push(await stage(testCase, attempt));
         cases.push({ ...testCase, attempts });
       }
       const sealedImport: SealedImportV1 = {
@@ -184,6 +180,8 @@ function formatTraceless(link: Extract<TraceLink, { kind: 'trace-less' }>): stri
       return `trace-less: ${shown(reason.path)} is not a regular file`;
     case 'too-large':
       return `trace-less: ${shown(reason.path)} is ${reason.bytes} bytes, over the ${reason.limit} byte limit`;
+    case 'over-budget':
+      return `trace-less: ${shown(reason.path)} is ${reason.bytes} bytes, past the import's ${reason.limit} byte trace budget`;
     case 'unreadable':
       return `trace-less: ${shown(reason.path)} is not readable (${reason.why.kind})`;
     default: {

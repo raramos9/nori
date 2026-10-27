@@ -6,7 +6,6 @@ import type { TraceRejection, TracelessReason } from '../graph/model.js';
 import { isInside } from '../runtime/layout.js';
 import { cleanText, LIMITS } from './limits.js';
 
-
 export type Untrusted =
   | { readonly kind: 'opened'; readonly copy: string; readonly bytes: number }
   | { readonly kind: 'refused'; readonly reason: TracelessReason };
@@ -43,8 +42,8 @@ async function openConfined(
   }
 }
 
-async function copyBounded(source: FileHandle, path: string, destination: string): Promise<Untrusted> {
-  const limit = LIMITS.traceFileBytes;
+async function copyBounded(source: FileHandle, path: string, destination: string, budget: number): Promise<Untrusted> {
+  const limit = Math.min(LIMITS.traceFileBytes, budget);
   const target = await open(destination, 'wx', 0o600);
   try {
     const buffer = Buffer.alloc(COPY_CHUNK);
@@ -60,7 +59,7 @@ async function copyBounded(source: FileHandle, path: string, destination: string
       }
       if (bytesRead === 0) break;
       bytes += bytesRead;
-      if (bytes > limit) return refused({ kind: 'too-large', path, bytes, limit });
+      if (bytes > limit) return refused(tooBig(path, bytes, budget));
       await target.write(buffer, 0, bytesRead);
     }
     await target.sync();
@@ -70,32 +69,45 @@ async function copyBounded(source: FileHandle, path: string, destination: string
   }
 }
 
-// Existence is checked before confinement, so a missing file reports the path as written. Everything
-// after the open reads the descriptor, and the copy in nori's staging directory is what gets parsed and kept.
-export async function copyUntrusted({
-  path,
-  root,
-  destination,
-}: {
-  path: string;
-  root: string;
-  destination: string;
-}): Promise<Untrusted> {
-  const opened = await openConfined(path, root);
-  if (opened.kind === 'refused') return opened;
-  const { handle } = opened;
-  try {
-    const stats = await handle.stat();
-    if (!stats.isFile()) return refused({ kind: 'not-a-file', path });
-    if (stats.size > LIMITS.traceFileBytes) {
-      return refused({ kind: 'too-large', path, bytes: stats.size, limit: LIMITS.traceFileBytes });
+function tooBig(path: string, bytes: number, budget: number): TracelessReason {
+  return bytes > LIMITS.traceFileBytes
+    ? { kind: 'too-large', path, bytes, limit: LIMITS.traceFileBytes }
+    : { kind: 'over-budget', path, bytes, limit: budget };
+}
+
+export type Copier = { readonly copy: (path: string, destination: string) => Promise<Untrusted> };
+
+// One import's copies. Each distinct file (by device and inode of the opened descriptor) is copied once
+// and every later path naming it gets that copy, and all copies draw on one byte budget. Existence is
+// checked before confinement, so a missing file reports the path as written. Everything after the open
+// reads the descriptor, and the copy in nori's staging directory is what gets parsed and kept.
+export function createCopier({ root, budget = LIMITS.importTraceBytes }: { root: string; budget?: number }): Copier {
+  const copies = new Map<string, Untrusted>();
+  let spent = 0;
+  const copy = async (path: string, destination: string): Promise<Untrusted> => {
+    const opened = await openConfined(path, root);
+    if (opened.kind === 'refused') return opened;
+    const { handle } = opened;
+    try {
+      const stats = await handle.stat({ bigint: true });
+      if (!stats.isFile()) return refused({ kind: 'not-a-file', path });
+      const identity = `${stats.dev}:${stats.ino}`;
+      const earlier = copies.get(identity);
+      if (earlier?.kind === 'refused' && 'path' in earlier.reason) return refused({ ...earlier.reason, path });
+      if (earlier !== undefined) return earlier;
+      const size = Number(stats.size);
+      const left = budget - spent;
+      if (size > LIMITS.traceFileBytes || size > left) return refused(tooBig(path, size, budget));
+      const copied = await copyBounded(handle, path, destination, left);
+      if (copied.kind === 'refused') await rm(destination, { force: true });
+      else spent += copied.bytes;
+      copies.set(identity, copied);
+      return copied;
+    } finally {
+      await handle.close();
     }
-    const copied = await copyBounded(handle, path, destination);
-    if (copied.kind === 'refused') await rm(destination, { force: true });
-    return copied;
-  } finally {
-    await handle.close();
-  }
+  };
+  return { copy };
 }
 
 export type ZipRead = { readonly kind: 'read' } | { readonly kind: 'rejected'; readonly why: TraceRejection };

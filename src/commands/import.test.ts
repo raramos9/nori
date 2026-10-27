@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -245,6 +245,28 @@ describe('nori import', () => {
       const report = await importReport({ reportPath, path: DEMO });
       expect(caseTitled(report.graph, 'boom').attempts[0]?.failures).toEqual([{ message: 'Error: boom', step: null }]);
       expect(formatImport(report)).toContain('failed: boom (not located on a transition)');
+    },
+    SLOW,
+  );
+
+  it(
+    'copies a trace that many attempts name once and links every attempt to that copy',
+    async () => {
+      const dir = scratchInRepo();
+      const trace = writeTrace(dir, 'shared.zip', {
+        '1-trace.trace': [
+          { type: 'context-options', version: 10, options: { baseURL: ORIGIN } },
+          { type: 'before', callId: 'c@1', startTime: 0, method: 'goto', params: { url: '/' } },
+          mainFrame('c@1', '/', 1),
+        ],
+      });
+      const results = [0, 1, 2].map((retry) => traceResult(trace, { retry }));
+      const reportPath = writeReport(dir, [{ title: 'one', results }, { title: 'two', results }]);
+      const { graph } = await importReport({ reportPath, path: DEMO });
+      const sealed = graph.tests[0]?.cases.flatMap(({ attempts }) => attempts.map(({ trace: link }) => (link.kind === 'read' ? link.sealed : null)));
+      expect(sealed).toHaveLength(6);
+      expect(new Set(sealed).size).toBe(1);
+      expect(readdirSync(dirname(sealed?.[0] ?? ''))).toHaveLength(1);
     },
     SLOW,
   );
