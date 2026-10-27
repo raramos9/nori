@@ -6,7 +6,7 @@ export const LIMITS = {
   entries: 10_000,
   entryBytes: 64 * 1024 * 1024,
   totalBytes: 256 * 1024 * 1024,
-  linesPerEntry: 1_000_000,
+  linesPerTrace: 1_000_000,
   callsPerAttempt: 250_000,
   snapshotNodes: 500_000,
   stepsPerAttempt: 10_000,

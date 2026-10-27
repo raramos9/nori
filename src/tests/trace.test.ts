@@ -332,10 +332,19 @@ describe('readTrace', () => {
     });
   });
 
-  it('rejects an entry with more lines than the cap before parsing it', async () => {
-    expect(await traceZip({ '1-trace.trace': '\n'.repeat(LIMITS.linesPerEntry) })).toEqual({
+  it('rejects a trace whose entries together pass the line budget, at the first line past it', async () => {
+    const half = '{"type":"x"}\n'.repeat(LIMITS.linesPerTrace / 2 + 1);
+    expect(await traceZip({ '1-trace.trace': half, '2-trace.trace': half })).toEqual({
       kind: 'rejected',
-      why: { kind: 'too-many-lines', entry: '1-trace.trace', count: LIMITS.linesPerEntry + 1 },
+      why: { kind: 'too-many-lines', entry: '2-trace.trace', count: LIMITS.linesPerTrace + 1 },
+    });
+  });
+
+  it('walks while it parses, so the call cap refuses a trace before a later bad line is reached', async () => {
+    const calls = Array.from({ length: LIMITS.callsPerAttempt + 1 }, (_, i) => `{"type":"before","callId":"c@${i}","method":"click"}`);
+    expect(await traceZip({ '1-trace.trace': `${calls.join('\n')}\n{not json\n${jsonl(gotoHome)}` })).toEqual({
+      kind: 'rejected',
+      why: { kind: 'too-many-calls', count: LIMITS.callsPerAttempt + 1 },
     });
   });
 
