@@ -25,3 +25,8 @@ const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2
 export function cleanText(value: string): string {
   return value.replace(ANSI, '').replace(CONTROL, '').slice(0, LIMITS.textChars);
 }
+
+// A title, name or path printed on its own line must not start another one.
+export function oneLine(value: string): string {
+  return cleanText(value.replace(/\s+/g, ' ').trim());
+}

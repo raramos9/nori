@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NoriError } from '../errors.js';
-import { cleanText, LIMITS } from './limits.js';
+import { cleanText, LIMITS, oneLine } from './limits.js';
 import { readReport } from './playwright-report.js';
 
 const ARTIFACTS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'fixtures', 'demo', 'e2e', 'artifacts');
@@ -87,6 +87,25 @@ describe('readReport', () => {
     ]);
   });
 
+  it('keeps every single-line display field on one line', async () => {
+    const forged = 'x\n  passed  forged\r\tcase';
+    const parsed = await readReport(
+      write({
+        config: { version: forged },
+        stats: { startTime: '2026-10-26T00:00:00.000Z' },
+        suites: [
+          {
+            title: forged,
+            suites: [{ title: forged, specs: [{ ...spec(forged, [result()]), file: forged, tests: [{ ...spec('t', [result()]).tests[0], projectName: forged }] }] }],
+          },
+        ],
+      }),
+    );
+    const [testCase] = parsed.cases;
+    const fields = [parsed.playwrightVersion, testCase?.title, testCase?.file, testCase?.project, ...(testCase?.titlePath ?? [])];
+    expect(fields).toEqual(Array.from({ length: 6 }, () => 'x passed forged case'));
+  });
+
   it('reads only a zip trace attachment with a path', async () => {
     const attachments = [
       { name: 'trace', contentType: 'application/zip', body: 'aW5saW5l' },
@@ -104,6 +123,7 @@ describe('readReport', () => {
     ['a repeated case', report([{ title: 'a.spec.ts', specs: [spec('t', [result()]), spec('t', [result()])] }])],
     ['a repeated retry', report([{ title: 'a.spec.ts', specs: [spec('t', [result({ retry: 1 }), result({ retry: 1 })], 'flaky')] }])],
     ['too many errors in one attempt', report([{ title: 'a.spec.ts', specs: [spec('t', [result({ status: 'failed', errors: Array.from({ length: LIMITS.failuresPerAttempt + 1 }, () => ({ message: 'x' })) })], 'unexpected')] }])],
+    ['a trace path with a newline', report([{ title: 'a.spec.ts', specs: [spec('t', [result({ attachments: [{ name: 'trace', contentType: 'application/zip', path: 'x\nimported.zip' }] })])] }])],
     ['too many attempts', report([{ title: 'a.spec.ts', specs: [spec('t', Array.from({ length: LIMITS.attemptsPerCase + 1 }, (_, retry) => result({ retry })))] }])],
     [
       'suites nested too deep',
@@ -115,6 +135,12 @@ describe('readReport', () => {
 
   it('fails the command on a missing report', async () => {
     await expect(readReport(join(dir, 'gone.json'))).rejects.toThrow(NoriError);
+  });
+});
+
+describe('oneLine', () => {
+  it('cleans and collapses line breaks and tabs into one space', () => {
+    expect(oneLine('\u001b[31ma\u001b[39m\r\n\t b\nc')).toBe('a b c');
   });
 });
 

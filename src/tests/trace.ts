@@ -10,7 +10,7 @@ import {
   type TestStep,
   type TraceRejection,
 } from '../graph/model.js';
-import { cleanText, LIMITS } from './limits.js';
+import { cleanText, LIMITS, oneLine } from './limits.js';
 import { readZip } from './zip.js';
 
 export const SUPPORTED_VERSIONS: ReadonlySet<number> = new Set([10]);
@@ -105,7 +105,7 @@ const lineSchemas = {
       parentId,
       method,
       url: params.url,
-      selector: params.selector === null ? null : cleanText(params.selector),
+      selector: params.selector === null ? null : oneLine(params.selector),
     })),
   after: z
     .object({ callId: z.string(), endTime: z.number(), error: z.object({ message: z.string().default('') }).optional() })
@@ -153,7 +153,7 @@ function findTarget(html: unknown): Target | null {
     const hasAttributes = typeof attributes === 'object' && attributes !== null && !Array.isArray(attributes);
     if (hasAttributes && Object.hasOwn(attributes, TARGET_ATTRIBUTE)) {
       const href: unknown = Reflect.get(attributes, 'href');
-      return { tag: cleanText(node[0]), href: typeof href === 'string' ? href : null };
+      return { tag: oneLine(node[0]), href: typeof href === 'string' ? href : null };
     }
     queued += node.length;
     if (queued > LIMITS.snapshotNodes) return null;

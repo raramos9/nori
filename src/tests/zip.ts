@@ -4,7 +4,7 @@ import { crc32, inflateRawSync } from 'node:zlib';
 import { errorCode } from '../errors.js';
 import type { TraceRejection, TracelessReason } from '../graph/model.js';
 import { isInside } from '../runtime/layout.js';
-import { cleanText, LIMITS } from './limits.js';
+import { LIMITS, oneLine } from './limits.js';
 
 export type Untrusted =
   | { readonly kind: 'opened'; readonly copy: string; readonly bytes: number }
@@ -160,11 +160,11 @@ function decodeName(raw: Buffer): string | null {
   }
 }
 
-// A safe name is one cleanText leaves unchanged, so every name a rejection reports is clean.
+// A safe name is one oneLine leaves unchanged, so every name a rejection reports is clean.
 function isSafeName(name: string): boolean {
   return (
     name !== '' &&
-    cleanText(name) === name &&
+    oneLine(name) === name &&
     !/[\u0000-\u001f\\]/.test(name) &&
     !name.startsWith('/') &&
     !/^[A-Za-z]:/.test(name) &&
@@ -232,7 +232,7 @@ async function centralDirectory(handle: FileHandle, size: number): Promise<{ ent
     if (next > cd.length) reject({ kind: 'truncated' });
     const rawName = cd.subarray(p + CENTRAL_BYTES, p + CENTRAL_BYTES + nameLength);
     const name = decodeName(rawName);
-    const shown = cleanText(name ?? rawName.toString('latin1'));
+    const shown = oneLine(name ?? rawName.toString('latin1'));
     if (name === null || !isSafeName(name)) reject({ kind: 'unsafe-name', entry: shown });
     if (seen.has(shown)) reject({ kind: 'duplicate-name', entry: shown });
     seen.add(shown);

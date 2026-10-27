@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { errorCode, NoriError } from '../errors.js';
 import { testCaseKey } from '../graph/ids.js';
 import type { AttemptStatus, TestCase, TestCaseKey, TestOutcome } from '../graph/model.js';
-import { cleanText, LIMITS } from './limits.js';
+import { cleanText, LIMITS, oneLine } from './limits.js';
 
 export type ReportAttempt = {
   readonly retry: number;
@@ -25,7 +25,7 @@ export type ParsedReport = {
   readonly cases: readonly ReportCase[];
 };
 
-const text = z.string().transform(cleanText);
+const line = z.string().transform(oneLine);
 const date = z.iso.datetime().transform((value) => new Date(value));
 const attemptStatus = z.enum(['passed', 'failed', 'timedOut', 'skipped', 'interrupted']);
 
@@ -50,27 +50,27 @@ const resultSchema = z.object({
 });
 
 const testSchema = z.object({
-  projectName: text,
+  projectName: line,
   expectedStatus: attemptStatus,
   status: z.enum(['expected', 'unexpected', 'flaky', 'skipped']),
   results: z.array(resultSchema),
 });
 
 const specSchema = z.object({
-  title: text,
-  file: text,
+  title: line,
+  file: line,
   line: z.number().int().nonnegative(),
   tests: z.array(testSchema),
 });
 
 const suiteSchema = z.object({
-  title: text,
+  title: line,
   specs: z.array(specSchema).default([]),
   suites: z.array(z.unknown()).default([]),
 });
 
 const reportSchema = z.object({
-  config: z.object({ version: text }),
+  config: z.object({ version: line }),
   suites: z.array(z.unknown()),
   stats: z.object({ startTime: date }),
 });
@@ -108,7 +108,7 @@ function attemptOf(reportPath: string, result: z.infer<typeof resultSchema>): Re
   const trace = result.attachments.find(
     ({ name, contentType, path }) => name === 'trace' && contentType === 'application/zip' && path !== undefined,
   );
-  if (trace?.path !== undefined && cleanText(trace.path) !== trace.path) fail(reportPath, 'a trace path carries control characters');
+  if (trace?.path !== undefined && oneLine(trace.path) !== trace.path) fail(reportPath, 'a trace path carries control characters or line breaks');
   return {
     retry: result.retry,
     status: result.status,

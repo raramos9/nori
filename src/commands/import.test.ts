@@ -194,7 +194,7 @@ describe('nori import', () => {
   );
 
   it(
-    'seals and prints a trace whose selector and method carry escape sequences without a control character',
+    'seals and prints a report and trace that carry escape sequences and line breaks without a control character or a forged line',
     async () => {
       const dir = scratchInRepo();
       const trace = writeTrace(dir, 'trace.zip', {
@@ -207,10 +207,11 @@ describe('nori import', () => {
           mainFrame('c@3', '/docs', 4),
         ],
       });
-      const reportPath = writeReport(dir, [{ title: 'docs \u001b[31mred\u001b[39m', results: [traceResult(trace)] }]);
+      const reportPath = writeReport(dir, [{ title: 'docs \u001b[31mred\u001b[39m\n  passed  forged', results: [traceResult(trace)] }]);
       const report = await importReport({ reportPath, path: DEMO });
       const printed = formatImport(report);
       expect(printed).toContain('/ -> /docs');
+      expect(printed).toContain('docs red passed forged');
       expect(printed).not.toMatch(CONTROL);
       const [loaded] = report.graph.tests;
       const sealed = readFileSync(join(dirname(loaded?.testImport.report.sealed ?? ''), IMPORT_FILE), 'utf8');
