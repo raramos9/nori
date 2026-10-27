@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import { TEST_APP, testAnalysis, testSnapshot } from '../testing/identity.js';
 import { evidenceId, testCaseKey, testImportId, transitionId } from './ids.js';
 import {
@@ -13,6 +13,7 @@ import {
   type TargetSearch,
   type TestAttempt,
   type TestCase,
+  type TransitionObservation,
   type TestStep,
   type TestStepMatch,
   type TransitionId,
@@ -170,5 +171,11 @@ describe('testEvidence', () => {
       passing: [{ outcome: 'flaky', retry: 1, asserted: true }],
     });
     expect(tests.byTransition.has(crawledId)).toBe(false);
+  });
+});
+
+describe('status separation', () => {
+  it('pins transition observation evidence to static and navigation, so a test variant breaks this on purpose', () => {
+    expectTypeOf<TransitionObservation['evidence']['kind']>().toEqualTypeOf<'static' | 'navigation'>();
   });
 });
