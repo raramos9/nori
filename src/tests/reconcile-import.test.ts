@@ -84,10 +84,12 @@ describe('reconcileImport', () => {
     expect(match.kind === 'walked-runtime-only' && ids.has(match.transitionId)).toBe(false);
   });
 
-  it('keeps every client trigger open for a click on anything but an anchor', () => {
-    expect(matchOf(url('/about'), [url('/settings/billing')], click(null))).toMatchObject({
-      kind: 'no-transition',
-      search: { triggerCandidates: ['link', 'router-push', 'router-replace'] },
+  it('keeps every client trigger open for a click on anything but an anchor, and names the id a crawled link walk mints', () => {
+    const anchorWalk = matchOf(url('/about'), [url('/settings/billing')], click('/settings/billing'));
+    expect(matchOf(url('/about'), [url('/settings/billing')], click(null))).toEqual({
+      kind: 'walked-runtime-only',
+      transitionId: anchorWalk.kind === 'walked-runtime-only' ? anchorWalk.transitionId : null,
+      search: expect.objectContaining({ triggerCandidates: ['link', 'router-push', 'router-replace'] }),
     });
   });
 
