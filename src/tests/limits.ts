@@ -16,6 +16,7 @@ export const LIMITS = {
   attemptsPerCase: 16,
   reportDepth: 64,
   textChars: 4096,
+  urlChars: 8192,
 } as const;
 
 const ANSI = /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[@-_])/g;

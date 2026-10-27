@@ -283,6 +283,25 @@ describe('stepsOf on hostile traces', () => {
     });
   });
 
+  it('ignores page, requested and anchor URLs longer than the URL cap', () => {
+    const long = `/${'a'.repeat(LIMITS.urlChars)}`;
+    const { steps } = trace({
+      context: [
+        options(),
+        before('c@1', 'goto', { url: long }),
+        snapshot('c@1', 'after', '/', 1),
+        before('c@2', 'click'),
+        snapshot('c@2', 'action', '/', 2, { html: targetHtml('A', { href: long }) }),
+        snapshot('c@2', 'after', long, 3),
+        snapshot('c@2', 'after', '/b', 4),
+      ],
+    });
+    expect(steps.map(({ cause, chain }) => [cause, chain])).toEqual([
+      [{ kind: 'navigate', method: 'goto', requested: null }, [`${ORIGIN}/`]],
+      [{ kind: 'input', method: 'click', selector: null, anchor: null }, [`${ORIGIN}/b`]],
+    ]);
+  });
+
   it('gives up on the anchor of a snapshot node with a million children instead of throwing', () => {
     const html = ['HTML', {}, ...Array.from({ length: 1_000_000 }, () => 'x')];
     expect(parseTraceLine(snapshot('c@1', 'action', '/', 1, { html }))).toMatchObject({ kind: 'line', line: { target: null } });

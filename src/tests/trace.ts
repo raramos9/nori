@@ -259,7 +259,9 @@ type PageState = {
 // stepCount counts redirect hops too, so a chain cannot grow past the step budget.
 type Attempt = { readonly calls: Map<string, Call>; readonly drafts: Draft[]; callCount: number; stepCount: number };
 
-function documentUrl(raw: string, base?: Origin): string | null {
+// An http(s) URL without its fragment, or null. Past urlChars a URL is noise nothing needs to keep.
+function documentUrl(raw: string, base?: string): string | null {
+  if (raw.length > LIMITS.urlChars) return null;
   let url: URL;
   try {
     url = new URL(raw, base);
@@ -268,7 +270,7 @@ function documentUrl(raw: string, base?: Origin): string | null {
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
   url.hash = '';
-  return url.href;
+  return url.href.length > LIMITS.urlChars ? null : url.href;
 }
 
 function originOf(raw: string | null): Origin | null {
@@ -294,7 +296,8 @@ function causeOf(call: Call, origin: Origin): StepCause {
     return { kind: 'navigate', method: call.method, requested };
   }
   const { target } = call;
-  const anchor = target !== null && target.tag.toUpperCase() === 'A' && target.href !== null ? onOrigin(origin, target.href) : null;
+  const href = target !== null && target.tag.toUpperCase() === 'A' && target.href !== null ? documentUrl(target.href, origin) : null;
+  const anchor = href === null ? null : onOrigin(origin, href);
   return { kind: 'input', method: call.method, selector: call.selector, anchor };
 }
 
