@@ -275,6 +275,14 @@ describe('stepsOf on hostile traces', () => {
     });
   });
 
+  it('rejects an attempt with more failing calls than the failure cap', () => {
+    const runner = Array.from({ length: LIMITS.failuresPerAttempt + 1 }, (_, i) => [before(`s@${i}`, 'expect'), after(`s@${i}`, i, 'Error: soft')]).flat();
+    expect(stepsOf({ runner: lines(runner), contexts: [lines(gotoHome)] })).toEqual({
+      kind: 'rejected',
+      why: { kind: 'too-many-failures', count: LIMITS.failuresPerAttempt + 1 },
+    });
+  });
+
   it('gives up on the anchor of a snapshot node with a million children instead of throwing', () => {
     const html = ['HTML', {}, ...Array.from({ length: 1_000_000 }, () => 'x')];
     expect(parseTraceLine(snapshot('c@1', 'action', '/', 1, { html }))).toMatchObject({ kind: 'line', line: { target: null } });

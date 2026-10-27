@@ -104,6 +104,7 @@ function specsOf(path: string, suites: readonly unknown[]): { describes: readonl
 
 function attemptOf(reportPath: string, result: z.infer<typeof resultSchema>): ReportAttempt {
   const messages = result.errors.length > 0 ? result.errors : result.error === undefined ? [] : [result.error];
+  if (messages.length > LIMITS.failuresPerAttempt) fail(reportPath, `an attempt has more than ${LIMITS.failuresPerAttempt} errors`);
   const trace = result.attachments.find(
     ({ name, contentType, path }) => name === 'trace' && contentType === 'application/zip' && path !== undefined,
   );

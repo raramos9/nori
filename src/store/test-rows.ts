@@ -65,6 +65,7 @@ const traceRejectionSchema: z.ZodType<TraceRejection, unknown> = z.union([
   z.object({ kind: z.literal('too-many-lines'), entry: z.string(), count }),
   z.object({ kind: z.literal('too-many-calls'), count }),
   z.object({ kind: z.literal('too-many-steps'), count }),
+  z.object({ kind: z.literal('too-many-failures'), count }),
   z.object({ kind: z.literal('io-error'), code: z.string() }),
 ]);
 

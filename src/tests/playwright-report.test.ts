@@ -103,6 +103,7 @@ describe('readReport', () => {
     ['a trace path with control characters', report([{ title: 'a.spec.ts', specs: [spec('t', [result({ attachments: [{ name: 'trace', contentType: 'application/zip', path: 'x\u001b[2J.zip' }] })])] }])],
     ['a repeated case', report([{ title: 'a.spec.ts', specs: [spec('t', [result()]), spec('t', [result()])] }])],
     ['a repeated retry', report([{ title: 'a.spec.ts', specs: [spec('t', [result({ retry: 1 }), result({ retry: 1 })], 'flaky')] }])],
+    ['too many errors in one attempt', report([{ title: 'a.spec.ts', specs: [spec('t', [result({ status: 'failed', errors: Array.from({ length: LIMITS.failuresPerAttempt + 1 }, () => ({ message: 'x' })) })], 'unexpected')] }])],
     ['too many attempts', report([{ title: 'a.spec.ts', specs: [spec('t', Array.from({ length: LIMITS.attemptsPerCase + 1 }, (_, retry) => result({ retry })))] }])],
     [
       'suites nested too deep',

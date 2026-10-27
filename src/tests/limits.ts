@@ -10,6 +10,7 @@ export const LIMITS = {
   callsPerAttempt: 250_000,
   snapshotNodes: 500_000,
   stepsPerAttempt: 10_000,
+  failuresPerAttempt: 1_000,
   reportBytes: 64 * 1024 * 1024,
   cases: 10_000,
   attemptsPerCase: 16,

@@ -471,6 +471,7 @@ function finish(attempt: Attempt, runnerCalls: ReadonlyMap<string, RunnerCall>):
   for (const call of leaves(runnerCalls)) {
     if (call.error !== null && FAILING_METHODS.has(call.method)) {
       failures.push({ message: call.error, step: stepAt(call.callId, call.end) });
+      if (failures.length > LIMITS.failuresPerAttempt) return { kind: 'rejected', why: { kind: 'too-many-failures', count: failures.length } };
     } else if (call.error === null && call.method === 'expect') {
       const step = stepAt(call.callId, call.end);
       if (step !== null) assertions[step] = (assertions[step] ?? 0) + 1;

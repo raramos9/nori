@@ -482,6 +482,7 @@ export type TraceRejection =
   | { readonly kind: 'too-many-lines'; readonly entry: string; readonly count: number }
   | { readonly kind: 'too-many-calls'; readonly count: number }
   | { readonly kind: 'too-many-steps'; readonly count: number }
+  | { readonly kind: 'too-many-failures'; readonly count: number }
   | { readonly kind: 'bad-trace-entry'; readonly entry: string }
   | { readonly kind: 'io-error'; readonly code: string };
 

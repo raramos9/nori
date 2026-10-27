@@ -234,12 +234,18 @@ function formatAttempt(loaded: LoadedTestImport, testCase: TestCase, attempt: Te
       .filter(({ caseKey, retry }) => caseKey === testCase.key && retry === attempt.retry)
       .map(({ seq, match }) => [seq, match]),
   );
+  const failuresAt = new Map<number | null, TestFailure[]>();
+  for (const failure of attempt.failures) {
+    const group = failuresAt.get(failure.step);
+    if (group === undefined) failuresAt.set(failure.step, [failure]);
+    else group.push(failure);
+  }
   const lines = [`${indent}trace ${shown(trace.original)}`];
   for (const step of trace.steps) {
-    const here = attempt.failures.filter((failure) => failure.step === step.seq).map(({ message }) => `   failed here: ${firstLine(message)}`);
+    const here = (failuresAt.get(step.seq) ?? []).map(({ message }) => `   failed here: ${firstLine(message)}`);
     lines.push(`${indent}${formatStep(step, matchOf.get(step.seq))}${here.join('')}`);
   }
-  for (const { message } of attempt.failures.filter((failure) => failure.step === null)) {
+  for (const { message } of failuresAt.get(null) ?? []) {
     lines.push(`${indent}failed: ${firstLine(message)} (not located on a transition)`);
   }
   return lines;
