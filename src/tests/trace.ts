@@ -301,7 +301,6 @@ function causeOf(call: Call, origin: Origin): StepCause {
   return { kind: 'input', method: call.method, selector: call.selector, anchor };
 }
 
-// Index of the last value <= limit in an ascending array, or -1.
 function lastAtOrBefore(values: readonly number[], limit: number): number {
   let low = 0;
   let high = values.length;

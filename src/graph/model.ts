@@ -427,7 +427,6 @@ export type TestImport = {
 
 // Playwright's test.status, renamed. flaky means a failed attempt and a passed retry.
 export type TestOutcome = 'passed' | 'failed' | 'skipped' | 'flaky';
-// Playwright's result.status, verbatim.
 export type AttemptStatus = 'passed' | 'failed' | 'timedOut' | 'skipped' | 'interrupted';
 
 export type TestCase = {
@@ -467,7 +466,6 @@ export type TracelessReason =
   | { readonly kind: 'over-budget'; readonly path: string; readonly bytes: number; readonly limit: number }
   | { readonly kind: 'unreadable'; readonly path: string; readonly why: TraceRejection };
 
-// Every way the untrusted trace bytes can be refused.
 export type TraceRejection =
   | { readonly kind: 'not-a-zip' | 'zip64' | 'multi-disk' | 'encrypted' | 'truncated' | 'overlapping-entries' }
   | { readonly kind: 'too-many-entries'; readonly count: number }
