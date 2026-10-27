@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { lstat, open, realpath, rm, type FileHandle } from 'node:fs/promises';
+import { lstat, open, realpath, rm, stat, type FileHandle } from 'node:fs/promises';
 import { crc32, inflateRawSync } from 'node:zlib';
 import { errorCode } from '../errors.js';
 import type { TraceRejection, TracelessReason } from '../graph/model.js';
@@ -20,10 +20,11 @@ function ioCode(error: unknown): string | null {
 
 const refused = (reason: TracelessReason) => ({ kind: 'refused', reason }) as const;
 
-async function openConfined(
-  path: string,
-  root: string,
-): Promise<{ readonly kind: 'open'; readonly handle: FileHandle } | ReturnType<typeof refused>> {
+type Opened = { readonly kind: 'open'; readonly handle: FileHandle; readonly identity: string; readonly size: number };
+
+// realpath confines the name; the descriptor's device and inode must still be the file that name
+// stated, and a file with a second link may have that link anywhere on the device.
+async function openConfined(path: string, root: string): Promise<Opened | ReturnType<typeof refused>> {
   try {
     await lstat(path);
   } catch (error) {
@@ -31,14 +32,36 @@ async function openConfined(
     if (code === null) throw error;
     return refused(MISSING.has(code) ? { kind: 'missing', path } : { kind: 'unreadable', path, why: { kind: 'io-error', code } });
   }
+  let handle: FileHandle;
+  let expected: string;
   try {
     const real = await realpath(path);
     if (!isInside(root, real)) return refused({ kind: 'outside-root', path, root });
-    return { kind: 'open', handle: await open(real, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK) };
+    const named = await stat(real, { bigint: true });
+    expected = `${named.dev}:${named.ino}`;
+    handle = await open(real, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (error) {
     const code = ioCode(error);
     if (code === null) throw error;
+    if (MISSING.has(code)) return refused({ kind: 'missing', path });
     return refused(code === 'ELOOP' ? { kind: 'not-a-file', path } : { kind: 'unreadable', path, why: { kind: 'io-error', code } });
+  }
+  try {
+    const stats = await handle.stat({ bigint: true });
+    const identity = `${stats.dev}:${stats.ino}`;
+    const reason: TracelessReason | null = !stats.isFile()
+      ? { kind: 'not-a-file', path }
+      : identity !== expected
+        ? { kind: 'changed', path }
+        : stats.nlink > 1n
+          ? { kind: 'hard-linked', path }
+          : null;
+    if (reason === null) return { kind: 'open', handle, identity, size: Number(stats.size) };
+    await handle.close();
+    return refused(reason);
+  } catch (error) {
+    await handle.close();
+    throw error;
   }
 }
 
@@ -87,15 +110,11 @@ export function createCopier({ root, budget = LIMITS.importTraceBytes }: { root:
   const copy = async (path: string, destination: string): Promise<Untrusted> => {
     const opened = await openConfined(path, root);
     if (opened.kind === 'refused') return opened;
-    const { handle } = opened;
+    const { handle, identity, size } = opened;
     try {
-      const stats = await handle.stat({ bigint: true });
-      if (!stats.isFile()) return refused({ kind: 'not-a-file', path });
-      const identity = `${stats.dev}:${stats.ino}`;
       const earlier = copies.get(identity);
       if (earlier?.kind === 'refused' && 'path' in earlier.reason) return refused({ ...earlier.reason, path });
       if (earlier !== undefined) return earlier;
-      const size = Number(stats.size);
       const left = budget - spent;
       if (size > LIMITS.traceFileBytes || size > left) return refused(tooBig(path, size, budget));
       const copied = await copyBounded(handle, path, destination, left);

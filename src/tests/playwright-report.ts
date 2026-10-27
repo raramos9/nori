@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
@@ -121,7 +122,7 @@ function attemptOf(reportPath: string, result: z.infer<typeof resultSchema>): Re
 // The report is the user's named input, so anything malformed fails the command. Attachment paths
 // are resolved against the report's directory and nothing else is opened here.
 export async function readReport(path: string): Promise<ParsedReport> {
-  const handle = await open(path, 'r').catch((error: unknown) => fail(path, `it cannot be opened (${String(errorCode(error))})`));
+  const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK).catch((error: unknown) => fail(path, `it cannot be opened (${String(errorCode(error))})`));
   let bytes: Buffer;
   try {
     const stats = await handle.stat();

@@ -178,6 +178,10 @@ function formatTraceless(link: Extract<TraceLink, { kind: 'trace-less' }>): stri
       return `trace-less: ${shown(reason.path)} is outside ${reason.root}`;
     case 'not-a-file':
       return `trace-less: ${shown(reason.path)} is not a regular file`;
+    case 'hard-linked':
+      return `trace-less: ${shown(reason.path)} has another hard link, which may be outside the root`;
+    case 'changed':
+      return `trace-less: ${shown(reason.path)} changed while nori opened it`;
     case 'too-large':
       return `trace-less: ${shown(reason.path)} is ${reason.bytes} bytes, over the ${reason.limit} byte limit`;
     case 'over-budget':

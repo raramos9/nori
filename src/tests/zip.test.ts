@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -170,6 +170,20 @@ describe('createCopier', () => {
     writeFileSync(join(outside, 'secret'), 'private key');
     const path = pathOf();
     expect(await copy(path)).toEqual({ kind: 'refused', reason: { kind: 'outside-root', path, root } });
+    expect(readdirSync(staging)).toEqual([]);
+  });
+
+  it('reports a dangling symlink as missing', async () => {
+    const path = join(root, 'test-results', 'dangling.zip');
+    symlinkSync(join(root, 'test-results', 'gone.zip'), path);
+    expect(await copy(path)).toEqual({ kind: 'refused', reason: { kind: 'missing', path } });
+  });
+
+  it('refuses a hard-linked file, whose other names realpath cannot see', async () => {
+    writeFileSync(join(outside, 'secret'), 'private key');
+    const path = join(root, 'test-results', 'linked.zip');
+    linkSync(join(outside, 'secret'), path);
+    expect(await copy(path)).toEqual({ kind: 'refused', reason: { kind: 'hard-linked', path } });
     expect(readdirSync(staging)).toEqual([]);
   });
 

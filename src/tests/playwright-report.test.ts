@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -132,6 +133,12 @@ describe('readReport', () => {
   ])('fails the command on %s', async (_name, json) => {
     await expect(readReport(write(json))).rejects.toThrow(NoriError);
   });
+
+  it('fails the command on a FIFO report without blocking', async () => {
+    const fifo = join(dir, 'report.json');
+    execFileSync('mkfifo', [fifo]);
+    await expect(readReport(fifo)).rejects.toThrow(NoriError);
+  }, 2000);
 
   it('fails the command on a missing report', async () => {
     await expect(readReport(join(dir, 'gone.json'))).rejects.toThrow(NoriError);

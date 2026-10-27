@@ -74,6 +74,8 @@ const tracelessReasonSchema: z.ZodType<TracelessReason, unknown> = z.discriminat
   z.object({ kind: z.literal('missing'), path: z.string() }),
   z.object({ kind: z.literal('outside-root'), path: z.string(), root: z.string() }),
   z.object({ kind: z.literal('not-a-file'), path: z.string() }),
+  z.object({ kind: z.literal('hard-linked'), path: z.string() }),
+  z.object({ kind: z.literal('changed'), path: z.string() }),
   z.object({ kind: z.literal('too-large'), path: z.string(), bytes: count, limit: count }),
   z.object({ kind: z.literal('over-budget'), path: z.string(), bytes: count, limit: count }),
   z.object({ kind: z.literal('unreadable'), path: z.string(), why: traceRejectionSchema }),
