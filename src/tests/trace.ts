@@ -296,7 +296,7 @@ function causeOf(call: Call, origin: Origin): StepCause {
     return { kind: 'navigate', method: call.method, requested };
   }
   const { target } = call;
-  const href = target !== null && target.tag.toUpperCase() === 'A' && target.href !== null ? documentUrl(target.href, origin) : null;
+  const href = target !== null && target.tag.toUpperCase() === 'A' ? target.href : null;
   const anchor = href === null ? null : onOrigin(origin, href);
   return { kind: 'input', method: call.method, selector: call.selector, anchor };
 }
@@ -370,7 +370,12 @@ function contextWalk(attempt: Attempt): Push {
             assignPage(call, pageOf(line.pageId));
           }
           call.end = Math.max(call.end, line.timestamp);
-          if (line.phase === 'action') call.target = line.target;
+          // The marked frame names the target; another frame's action snapshot of the same call never
+          // replaces it. The href resolves against that frame's URL, as the browser resolved it.
+          if (line.phase === 'action' && call.target === null && line.target !== null) {
+            const { tag, href } = line.target;
+            call.target = { tag, href: href === null ? null : documentUrl(href, documentUrl(line.frameUrl) ?? undefined) };
+          }
         }
         const url = line.isMainFrame ? documentUrl(line.frameUrl) : null;
         if (url === null) break;

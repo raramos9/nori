@@ -166,6 +166,21 @@ describe('stepsOf', () => {
     expect(offOrigin.steps[1]?.cause).toEqual({ kind: 'input', method: 'click', selector: null, anchor: null });
   });
 
+  it('keeps the anchor a later frame of the same action does not mark, and resolves it against its frame URL', () => {
+    const { steps } = trace({
+      context: [
+        options(),
+        before('c@1', 'goto', { url: '/guide/' }),
+        snapshot('c@1', 'after', '/guide/', 1),
+        before('c@2', 'click'),
+        snapshot('c@2', 'action', '/guide/', 2, { html: targetHtml('A', { href: 'intro?x=1' }) }),
+        { ...snapshot('c@2', 'action', '/frame', 3), snapshot: { ...snapshot('c@2', 'action', '/frame', 3).snapshot, isMainFrame: false, frameId: 'frame@2' } },
+        snapshot('c@2', 'after', '/guide/intro?x=1', 4),
+      ],
+    });
+    expect(steps[1]?.cause).toMatchObject({ anchor: `${ORIGIN}/guide/intro?x=1` });
+  });
+
   it('counts passing expects on the step whose landing they settled on', () => {
     const { steps, failures } = trace({
       runner: [
