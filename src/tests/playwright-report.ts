@@ -145,6 +145,7 @@ export async function readReport(path: string): Promise<ParsedReport> {
       if (keys.has(key)) fail(path, `${spec.file} lists ${JSON.stringify(spec.title)} twice in project ${JSON.stringify(test.projectName)}`);
       keys.add(key);
       if (test.results.length > LIMITS.attemptsPerCase) fail(path, `${spec.title} has more than ${LIMITS.attemptsPerCase} attempts`);
+      if (new Set(test.results.map(({ retry }) => retry)).size !== test.results.length) fail(path, `${spec.title} repeats a retry`);
       return {
         key,
         title: spec.title,
