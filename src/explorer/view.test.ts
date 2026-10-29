@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evidenceId, runId, screenId, stateId, transitionId } from '../graph/ids.js';
+import { evidenceId, runId, screenId, stateId, testCaseKey, testImportId, transitionId } from '../graph/ids.js';
 import {
   DEFAULT_STATE_KEY,
   parseArtifactPath,
@@ -14,6 +14,11 @@ import {
   type LoadedScreen,
   type LoadedTransition,
   type Transition,
+  type TestAttempt,
+  type TestCase,
+  type TestStep,
+  type TransitionId,
+  type TransitionObservation,
 } from '../graph/model.js';
 import { TEST_APP, testAnalysis, testSnapshot } from '../testing/identity.js';
 import { toExplorerGraph } from './view.js';
@@ -244,4 +249,176 @@ describe('toExplorerGraph', () => {
       ]);
     });
   });
+
+  describe('test evidence and coverage', () => {
+    const origin = parseOrigin('http://localhost:3000');
+    const session = { kind: 'anonymous' } as const;
+    const startedAt = new Date('2026-01-02T00:00:00.000Z');
+    const run: Run = {
+      id: runId({ snapshotId: snapshot.id, origin, session, startedAt }),
+      snapshotId: snapshot.id,
+      origin,
+      session,
+      environment: 'local',
+      seededBy: analysis.analyzerVersion,
+      startedAt,
+      finishedAt: new Date('2026-01-02T00:01:00.000Z'),
+      stop: 'frontier-exhausted',
+      crawlerVersion: '1',
+      requests: { allowed: 1, blocked: 0 },
+    };
+    const landing = parsePageUrl(origin, '/about');
+    const navIdentity = { kind: 'navigation', runId: run.id, start: { kind: 'entry' }, requested: landing } as const;
+    const navigation: NavigationEvidence = {
+      ...navIdentity,
+      id: evidenceId(navIdentity),
+      redirects: [],
+      landing: {
+        evidenceId: evidenceId({ kind: 'capture', runId: run.id, url: landing }),
+        url: landing,
+        httpStatus: 200,
+        screenshot: parseArtifactPath('/runs/about.png'),
+        dom: parseArtifactPath('/runs/about.html'),
+      },
+      logSeq: 0,
+    };
+    const matched = (rule: 'rendered-hop' | 'action-runtime-only'): TransitionObservation =>
+      ({
+        evidence: navigation,
+        match: {
+          verdict: 'supports',
+          rule,
+          sourceUrl: parsePageUrl(origin, '/'),
+          sourcePattern: home.screen.routePattern,
+          targetUrl: landing,
+          targetPattern: about.screen.routePattern,
+          skipped: [],
+          triggerCandidates: ['link'],
+          ...(rule === 'rendered-hop' ? { hop: 0 } : {}),
+        },
+      }) as TransitionObservation;
+
+    const walkedAndFailed = loadedTransition(home, { kind: 'resolved', stateId: about.states[0].id }, 4);
+    const walkedInFailingOnly = loadedTransition(home, { kind: 'unresolved', reason: 'dynamic-expression', expression: 'a' }, 5);
+    const passedAsserted = loadedTransition(about, { kind: 'resolved', stateId: home.states[0].id }, 6);
+    const untested = loadedTransition(about, { kind: 'unresolved', reason: 'dynamic-expression', expression: 'b' }, 7);
+    const crawledOnly: LoadedTransition = {
+      transition: { ...walkedAndFailed.transition, id: transitionId({ sourceStateId: about.states[0].id, trigger: { kind: 'router-push' } as const, target: { kind: 'resolved', stateId: home.states[0].id } }), trigger: { kind: 'router-push' } },
+      observations: [matched('action-runtime-only')],
+      status: 'observed',
+    };
+    const observedCandidate: LoadedTransition = {
+      ...passedAsserted,
+      observations: [...passedAsserted.observations, matched('rendered-hop')],
+      status: 'observed',
+    };
+
+    const search = {
+      sourceUrl: parsePageUrl(origin, '/'),
+      sourcePattern: home.screen.routePattern,
+      targetUrl: landing,
+      targetPattern: about.screen.routePattern,
+      skipped: [],
+      triggerCandidates: ['link'],
+    } as const;
+    const step = (seq: number, assertions: number): TestStep => ({
+      seq,
+      page: 0,
+      at: seq,
+      origin,
+      cause: { kind: 'input', method: 'click', selector: null, anchor: null },
+      from: `${origin}/`,
+      chain: [landing],
+      assertions,
+    });
+    const importId = testImportId({ snapshotId: snapshot.id, sha256: 'a'.repeat(64) });
+    function testCase(title: string, status: 'passed' | 'failed', steps: TestStep[], failures: TestAttempt['failures']): TestCase {
+      return {
+        key: testCaseKey({ file: 'a.spec.ts', titlePath: [title], project: '' }),
+        title,
+        titlePath: [title],
+        file: 'a.spec.ts',
+        line: 1,
+        project: '',
+        expectedStatus: 'passed',
+        outcome: status,
+        attempts: [
+          {
+            retry: 0,
+            status,
+            trace: { kind: 'read', original: parseArtifactPath('/r/t.zip'), sealed: parseArtifactPath('/s/t.zip'), steps },
+            failures,
+          },
+        ],
+      };
+    }
+    const failingCase = testCase('checkout fails', 'failed', [step(0, 0), step(1, 0)], [{ message: 'expected /about', step: 1 }]);
+    const passingCase = testCase('about passes', 'passed', [step(0, 2), step(1, 1)], []);
+    const walk = (testCaseValue: TestCase, seq: number, transitionIdValue: TransitionId, kind: 'walked' | 'walked-runtime-only' = 'walked') => ({
+      caseKey: testCaseValue.key,
+      retry: 0,
+      seq,
+      match: { kind, transitionId: transitionIdValue, search } as const,
+    });
+
+    const graph: BuildGraph = {
+      ...build,
+      runs: [run],
+      screens: [home, about],
+      transitions: [walkedAndFailed, walkedInFailingOnly, observedCandidate, untested, crawledOnly],
+      tests: [
+        {
+          testImport: {
+            id: importId,
+            snapshotId: snapshot.id,
+            environment: 'local',
+            importedAt: new Date(0),
+            report: {
+              original: parseArtifactPath('/r/report.json'),
+              sealed: parseArtifactPath('/s/report.json'),
+              sha256: 'a'.repeat(64),
+              playwrightVersion: '1.64.0',
+              startedAt: new Date(0),
+            },
+          },
+          cases: [failingCase, passingCase],
+          matches: [
+            walk(failingCase, 0, walkedInFailingOnly.transition.id),
+            walk(failingCase, 1, walkedAndFailed.transition.id),
+            walk(passingCase, 0, observedCandidate.transition.id),
+            walk(passingCase, 1, crawledOnly.transition.id, 'walked-runtime-only'),
+          ],
+        },
+      ],
+    };
+
+    it('puts a failure on exactly the transition it ran on and keeps the earlier walk out of failing', () => {
+      const { transitions } = toExplorerGraph({ root: rootPath, graph });
+      const byId = new Map(transitions.map((transition) => [transition.id, transition]));
+      expect(transitions.filter(({ tests }) => tests.failing.length > 0).map(({ id }) => id)).toEqual([walkedAndFailed.transition.id]);
+      expect(byId.get(walkedAndFailed.transition.id)?.tests.failing).toMatchObject([{ title: 'checkout fails', message: 'expected /about' }]);
+      const earlier = byId.get(walkedInFailingOnly.transition.id)?.tests;
+      expect(earlier?.failing).toEqual([]);
+      expect(earlier?.walkedInFailing).toMatchObject([{ title: 'checkout fails' }]);
+      expect(byId.get(untested.transition.id)?.tests).toEqual({ passing: [], failing: [], walkedInFailing: [] });
+    });
+
+    it('leaves every status as the graph set it', () => {
+      const { transitions } = toExplorerGraph({ root: rootPath, graph });
+      expect(transitions.map(({ id, status }) => [id, status])).toEqual(
+        graph.transitions.map(({ transition, status }) => [transition.id, status]),
+      );
+    });
+
+    it('counts inferred, observed and exercised over static candidates only, leaving the runtime-only transition out', () => {
+      const { coverage } = toExplorerGraph({ root: rootPath, graph });
+      expect(coverage).toEqual({
+        denominator: `candidate transitions in snapshot ${snapshot.id}`,
+        inferred: 4,
+        observed: 1,
+        exercisedByPassingTest: 1,
+      });
+    });
+  });
 });
+

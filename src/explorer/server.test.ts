@@ -97,6 +97,7 @@ async function fixture(): Promise<Fixture> {
     ],
     transitions: [],
     runs: [],
+    coverage: { denominator: 'candidate transitions in snapshot snp_test', inferred: 0, observed: 0, exercisedByPassingTest: 0 },
   } satisfies ExplorerGraph;
 
   const server = await startExplorerServer({ graph, uiDir });

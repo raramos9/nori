@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseEvidenceId, parseRoutePattern, parseScreenId, parseTransitionId } from '../../src/graph/model.js';
 import type { ExplorerGraph, ExplorerScreen, ExplorerTransition } from '../../src/explorer/view.js';
+import { NO_TESTS } from '../../src/graph/tests.js';
 import { focusGraph, STATUSES, visibleGraph } from './flow.js';
 import { isBackward, layoutFocused, layoutGraph } from './layout.js';
 
@@ -27,6 +28,7 @@ function transition(from: ExplorerScreen, to: ExplorerScreen): ExplorerTransitio
     runtimeOnly: false,
     observedIn: [],
     mayExplain: [],
+    tests: NO_TESTS,
   };
 }
 
@@ -37,6 +39,7 @@ function view(screens: ExplorerScreen[], edges: [ExplorerScreen, ExplorerScreen]
     screens,
     transitions: edges.map(([from, to]) => transition(from, to)),
     runs: [],
+    coverage: { denominator: 'candidate transitions in snapshot snp_test', inferred: 0, observed: 0, exercisedByPassingTest: 0 },
   };
   return visibleGraph(graph, { statuses: new Set(STATUSES), showUnresolved: true });
 }

@@ -13,6 +13,7 @@ function snapshotOf(sourceHash: string): Snapshot {
     screens: [],
     transitions: [],
     runs: [],
+    coverage: { denominator: 'candidate transitions in snapshot snp_test', inferred: 0, observed: 0, exercisedByPassingTest: 0 },
   };
   return createSnapshot({ graph, key: { commitSha, sourceHash } });
 }

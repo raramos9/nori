@@ -1,4 +1,5 @@
 import { mayExplain, verdictOf } from '../graph/model.js';
+import { NO_TESTS, testEvidence, type TransitionTests } from '../graph/tests.js';
 import type {
   BuildGraph,
   EvidenceId,
@@ -85,6 +86,15 @@ export type ExplorerTransition = {
   readonly runtimeOnly: boolean;
   readonly observedIn: readonly string[];
   readonly mayExplain: readonly TransitionId[];
+  readonly tests: TransitionTests;
+};
+
+// All three counts range over the same candidates: transitions the static analysis found.
+export type Coverage = {
+  readonly denominator: string;
+  readonly inferred: number;
+  readonly observed: number;
+  readonly exercisedByPassingTest: number;
 };
 
 export type ExplorerGraph = {
@@ -99,6 +109,7 @@ export type ExplorerGraph = {
   readonly screens: readonly ExplorerScreen[];
   readonly transitions: readonly ExplorerTransition[];
   readonly runs: readonly ExplorerRun[];
+  readonly coverage: Coverage;
 };
 
 function sourceRefs(observations: readonly EvidenceObservation[]): SourceRef[] {
@@ -216,6 +227,29 @@ export function toExplorerGraph({ root, graph }: { root: string; graph: BuildGra
   };
 
   const { snapshot, analysis } = graph;
+  const tests = testEvidence(graph);
+  const transitions = graph.transitions.map(({ transition, status, observations }): ExplorerTransition => {
+    const { target } = transition;
+    const transitionWalks = walks(observations, sessionOf);
+    const runtimeOnly = !observations.some(({ evidence }) => evidence.kind === 'static');
+    return {
+      id: transition.id,
+      sourceScreenId: screenOf(transition.sourceStateId, `Transition ${transition.id} source state`),
+      trigger: transition.trigger.kind,
+      target:
+        target.kind === 'resolved'
+          ? { kind: 'screen', screenId: screenOf(target.stateId, `Transition ${transition.id} target state`) }
+          : { kind: 'unresolved', reason: target.reason, expression: target.expression },
+      status,
+      sources: sourceRefs(observations),
+      walks: transitionWalks,
+      runtimeOnly,
+      observedIn: [...new Set(transitionWalks.map((walk) => walk.session))].sort(),
+      mayExplain: runtimeOnly ? mayExplain(graph, transition.id) : [],
+      tests: tests.byTransition.get(transition.id) ?? NO_TESTS,
+    };
+  });
+  const candidates = transitions.filter(({ runtimeOnly }) => !runtimeOnly);
   return {
     root,
     build: {
@@ -232,26 +266,7 @@ export function toExplorerGraph({ root, graph }: { root: string; graph: BuildGra
       sources: sourceRefs(observations),
       captures: captures(observations, sessionOf),
     })),
-    transitions: graph.transitions.map(({ transition, status, observations }) => {
-      const { target } = transition;
-      const transitionWalks = walks(observations, sessionOf);
-      const runtimeOnly = !observations.some(({ evidence }) => evidence.kind === 'static');
-      return {
-        id: transition.id,
-        sourceScreenId: screenOf(transition.sourceStateId, `Transition ${transition.id} source state`),
-        trigger: transition.trigger.kind,
-        target:
-          target.kind === 'resolved'
-            ? { kind: 'screen', screenId: screenOf(target.stateId, `Transition ${transition.id} target state`) }
-            : { kind: 'unresolved', reason: target.reason, expression: target.expression },
-        status,
-        sources: sourceRefs(observations),
-        walks: transitionWalks,
-        runtimeOnly,
-        observedIn: [...new Set(transitionWalks.map((walk) => walk.session))].sort(),
-        mayExplain: runtimeOnly ? mayExplain(graph, transition.id) : [],
-      };
-    }),
+    transitions,
     runs: graph.runs.map((run) => ({
       id: run.id,
       session: sessionLabel(run.session),
@@ -261,5 +276,11 @@ export function toExplorerGraph({ root, graph }: { root: string; graph: BuildGra
       stop: run.stop,
       requests: run.requests,
     })),
+    coverage: {
+      denominator: `candidate transitions in snapshot ${snapshot.id}`,
+      inferred: candidates.length,
+      observed: candidates.filter(({ walks: seen }) => seen.length > 0).length,
+      exercisedByPassingTest: candidates.filter(({ id }) => tests.exercisedByPassingTest.has(id)).length,
+    },
   };
 }

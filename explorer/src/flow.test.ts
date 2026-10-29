@@ -8,6 +8,7 @@ import {
   type ScreenId,
 } from '../../src/graph/model.js';
 import type { ExplorerGraph, ExplorerScreen, ExplorerTarget, ExplorerTransition } from '../../src/explorer/view.js';
+import { NO_TESTS } from '../../src/graph/tests.js';
 import { focusGraph, indexGraph, matchingScreens, STATUSES, visibleGraph, walk, type Filters } from './flow.js';
 import { layoutGraph } from './layout.js';
 
@@ -38,6 +39,7 @@ function transition(
     runtimeOnly: false,
     observedIn: [],
     mayExplain: [],
+    tests: NO_TESTS,
   };
 }
 const to = (s: ExplorerScreen): ExplorerTarget => ({ kind: 'screen', screenId: s.id });
@@ -60,6 +62,7 @@ const graph: ExplorerGraph = {
     transition(about, to(pricing), 'observed'),
   ],
   runs: [],
+  coverage: { denominator: 'candidate transitions in snapshot snp_test', inferred: 0, observed: 0, exercisedByPassingTest: 0 },
 };
 const all: Filters = { statuses: new Set(STATUSES), showUnresolved: true };
 
