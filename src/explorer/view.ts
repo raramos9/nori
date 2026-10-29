@@ -89,7 +89,6 @@ export type ExplorerTransition = {
   readonly tests: TransitionTests;
 };
 
-// All three counts range over the same candidates: transitions the static analysis found.
 export type Coverage = {
   readonly denominator: string;
   readonly inferred: number;
