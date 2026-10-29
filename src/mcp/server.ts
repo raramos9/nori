@@ -24,6 +24,13 @@ const buildSchema = z.object({
     ),
 });
 
+const coverageSchema = z.object({
+  denominator: z.string().describe('What the counts below are counted against; every count shares it'),
+  inferred: z.number().describe('Transitions the static analysis found (the denominator)'),
+  observed: z.number().describe('Of those, how many a crawl walked'),
+  exercisedByPassingTest: z.number().describe('Of those, how many a passing Playwright test walked and then asserted on'),
+});
+
 const sourceSchema = z.object({
   evidenceId: z.string(),
   file: z.string(),
@@ -106,6 +113,7 @@ export function createMcpServer({ current, realRoot }: { current: () => Promise<
       annotations: READ_ONLY,
       outputSchema: {
         build: buildSchema,
+        coverage: coverageSchema,
         screens: z.array(
           screenSchema.omit({ sources: true, captures: true }).extend({
             outgoing: z.number().describe('Transitions leaving this screen'),
@@ -122,6 +130,7 @@ export function createMcpServer({ current, realRoot }: { current: () => Promise<
       const { graph, index } = served.snapshot;
       return respond({
         build: buildInfo(served),
+        coverage: graph.coverage,
         screens: [...graph.screens]
           .sort((a, b) => (a.route < b.route ? -1 : a.route > b.route ? 1 : 0))
           .map((screen) => {

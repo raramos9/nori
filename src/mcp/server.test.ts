@@ -49,6 +49,7 @@ describe('nori MCP server', () => {
     const list = await client.callTool({ name: 'list_screens' });
     const listed = list.structuredContent as {
       build: { id: string; commitSha: string };
+      coverage: { denominator: string; inferred: number; observed: number; exercisedByPassingTest: number };
       screens: { id: string; route: string; status: string; outgoing: number; unresolvedOutgoing: number }[];
     };
     expect(JSON.parse((list.content as { text: string }[])[0]!.text)).toEqual(list.structuredContent);
@@ -57,6 +58,9 @@ describe('nori MCP server', () => {
       { route: '/', outgoing: 2, unresolvedOutgoing: 1 },
       { route: '/about', outgoing: 1, unresolvedOutgoing: 0 },
     ]);
+    expect(listed.coverage).toEqual(graph.coverage);
+    expect(listed.coverage).toMatchObject({ inferred: 3, observed: 0, exercisedByPassingTest: 0 });
+    expect(listed.coverage.denominator).toMatch(/^candidate transitions in snapshot /);
     expect(listed.screens.every(({ status }) => status === 'inferred')).toBe(true);
     expect(listed.screens[0]).not.toHaveProperty('sources');
 
