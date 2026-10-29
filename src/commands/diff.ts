@@ -250,7 +250,7 @@ export function formatDiffMarkdown({ diff, refs }: { diff: BuildDiff; refs: Refs
   } else {
     lines.push('| Change | Subject |', '| --- | --- |');
     for (const change of diff.changes) {
-      const detail = change.kind === 'screenshot-changed' ? cell(changeDetail(change)) : '';
+      const detail = change.kind === 'screenshot-changed' ? ` ${cell(codeSpan(changeDetail(change).trim()))}` : '';
       lines.push(`| ${kindWord(change.kind)} | ${subjectCell(change.subject)}${detail} |`);
     }
   }

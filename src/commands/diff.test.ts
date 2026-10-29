@@ -273,6 +273,16 @@ describe('diff renderers', () => {
     ]);
   });
 
+  it('keeps a crawled page path that looks like markdown inside a code span', () => {
+    const hostile = changes.map((change) =>
+      change.kind === 'screenshot-changed' ? { ...change, path: '/a|b[click](https://x)?q=`y`' } : change,
+    );
+    const lines = formatDiffMarkdown({ diff: { ...diff, changes: hostile }, refs }).split('\n');
+    expect(lines).toContain(
+      `| screenshot differs | \`screen /settings\` \`\` (storage-state:signed-in /a\\|b[click](https://x)?q=\`y\`: evd_${id(5)} -> evd_${id(6)}) \`\` |`,
+    );
+  });
+
   it('prints no changes and no gap section for an empty diff', () => {
     const empty = { ...diff, base: side('a', []), head: side('b', []), changes: [], gaps: [] };
     expect(formatDiff({ diff: empty, refs }).split('\n').slice(3)).toEqual(['', 'no changes']);
@@ -285,7 +295,7 @@ describe('diff renderers', () => {
     expect(lines).toContain('| Change | Subject |');
     expect(lines).toContain('| added | `screen /reports` |');
     expect(lines).toContain('| status changed | `screen /login` |');
-    expect(lines).toContain(`| screenshot differs | \`screen /settings\` (storage-state:signed-in /settings: evd_${id(5)} -> evd_${id(6)}) |`);
+    expect(lines).toContain(`| screenshot differs | \`screen /settings\` \`(storage-state:signed-in /settings: evd_${id(5)} -> evd_${id(6)})\` |`);
     expect(lines).toContain('| newly observed | ``` transition /b -router-push-> ? a \\| b ? `x` : y (dynamic-expression) ``` |'.replace('```', '``').replace('```', '``'));
     expect(lines).toContain('<summary>4 coverage gaps</summary>');
     expect(lines).toContain('| Subject | Seen in | Why not compared |');
