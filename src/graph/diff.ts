@@ -365,10 +365,15 @@ function classify<S extends Subject, W>(
   return { changes, gaps };
 }
 
-type NewestCapture = { readonly session: Session; readonly path: string; readonly evidence: CaptureEvidence; readonly run: Run };
+type NewestCapture = {
+  readonly session: Session;
+  readonly path: string;
+  readonly evidence: CaptureEvidence;
+  readonly run: Run;
+};
 
-// The newest supporting capture of each session and page. A dynamic screen is many pages, and two
-// different pages of it always differ, so only captures of the same path are comparable. A contradicting capture is an error page, not the screen.
+// Keyed by session and page path: a dynamic screen is many pages, and two different pages of it always differ.
+// A contradicting capture is an error page, not the screen.
 function newestCaptures(graph: BuildGraph, observations: readonly EvidenceObservation[]): Map<string, NewestCapture> {
   const runById = new Map(graph.runs.map((run) => [run.id, run]));
   const newest = new Map<string, NewestCapture>();
@@ -422,7 +427,14 @@ function screenshotChanges(
       const base = cite(baseCapture);
       const headCite = cite(headCapture);
       if (base.sha256 !== headCite.sha256) {
-        changes.push({ kind: 'screenshot-changed', subject, session: baseCapture.session, path: baseCapture.path, base, head: headCite });
+        changes.push({
+          kind: 'screenshot-changed',
+          subject,
+          session: baseCapture.session,
+          path: baseCapture.path,
+          base,
+          head: headCite,
+        });
       }
     }
   }
@@ -437,7 +449,10 @@ function subjectOrder(a: Subject, b: Subject): number {
 
 export type ScreenshotDigest = (path: ArtifactPath) => string;
 
-export function diffBuilds({ base, head }: ComparablePair, { screenshotDigest }: { screenshotDigest: ScreenshotDigest }): BuildDiff {
+export function diffBuilds(
+  { base, head }: ComparablePair,
+  { screenshotDigest }: { screenshotDigest: ScreenshotDigest },
+): BuildDiff {
   const sides = { base: indexSide(base), head: indexSide(head) };
   const ids = new Set([...sides.base.entries.keys(), ...sides.head.entries.keys()]);
   const changes: Change[] = [];
