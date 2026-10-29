@@ -122,7 +122,7 @@ function build(spec: GraphSpec) {
       ...identity,
       id: evidenceId(identity),
       httpStatus,
-      screenshot: parseArtifactPath('/tmp/shot.png'),
+      screenshot: parseArtifactPath(`/shots/${spec.commit ?? 'a'}/${runName}${route}.png`),
       dom: parseArtifactPath('/tmp/dom.html'),
     };
     captures.set(key, capture);
@@ -235,12 +235,14 @@ function pairOf(base: BuildGraph, head: BuildGraph): ComparablePair {
 }
 
 function diff(base: GraphSpec, head: GraphSpec): BuildDiff {
-  return diffBuilds(pairOf(build(base).graph, build({ commit: 'b', ...head }).graph));
+  return diffBuilds(pairOf(build(base).graph, build({ commit: 'b', ...head }).graph), { screenshotDigest: sameDigest });
 }
 
 const kindsOf = (changes: readonly Change[]) => changes.map(({ kind }) => kind);
 const label = (change: Change) =>
   `${change.kind} ${change.subject.kind === 'screen' ? change.subject.routePattern : `${change.subject.from} -> ${JSON.stringify(change.subject.to)}`}`;
+
+const sameDigest = () => 'same';
 
 const crawled = { runs: [{ name: 'r' }] } as const;
 
@@ -361,7 +363,7 @@ describe('diffBuilds runtime claims', () => {
   it('reports a screen the head crawl exhausted its frontier without seeing as newly-unverified', () => {
     const base = build({ ...crawled, screens: [{ route: '/a', seen: ['r'] }], transitions: [loop('/a')] });
     const head = build({ commit: 'b', ...crawled, screens: [{ route: '/a' }], transitions: [unseenLoop('/a')] });
-    const result = diffBuilds(pairOf(base.graph, head.graph));
+    const result = diffBuilds(pairOf(base.graph, head.graph), { screenshotDigest: sameDigest });
     expect(screenOnly(result.changes)).toMatchObject([
       {
         kind: 'newly-unverified',
@@ -375,7 +377,7 @@ describe('diffBuilds runtime claims', () => {
   it('reports a screen the head crawl saw and a base crawl did not as newly-observed', () => {
     const base = build({ ...crawled, screens: [{ route: '/a' }], transitions: [unseenLoop('/a')] });
     const head = build({ commit: 'b', ...crawled, screens: [{ route: '/a', seen: ['r'] }], transitions: [loop('/a')] });
-    const result = diffBuilds(pairOf(base.graph, head.graph));
+    const result = diffBuilds(pairOf(base.graph, head.graph), { screenshotDigest: sameDigest });
     expect(screenOnly(result.changes)).toMatchObject([
       { kind: 'newly-observed', base: { witnesses: [{ runId: base.run('r') }] }, head: { status: 'observed' } },
     ]);
@@ -393,7 +395,7 @@ describe('diffBuilds runtime claims', () => {
       screens: [{ route: '/a', seen: ['r'] }, { route: '/b' }],
       transitions: [{ from: '/a', to: '/b' }],
     });
-    const result = diffBuilds(pairOf(base.graph, head.graph));
+    const result = diffBuilds(pairOf(base.graph, head.graph), { screenshotDigest: sameDigest });
     expect(result.changes).toMatchObject([
       {
         kind: 'newly-unverified',
@@ -508,7 +510,7 @@ describe('diffBuilds envelope', () => {
     const base = build({ ...crawled, screens: [{ route: '/a' }] });
     const unmatched = build({ commit: 'c', runs: [{ name: 'u' }], screens: [] }).run('u');
     const head = build({ commit: 'b', ...crawled, screens: [{ route: '/a' }], unmatchedRuns: [unmatched] });
-    const result = diffBuilds(pairOf(base.graph, head.graph));
+    const result = diffBuilds(pairOf(base.graph, head.graph), { screenshotDigest: sameDigest });
     expect(result).toMatchObject({
       appKey: TEST_APP.id,
       base: { analysisId: base.graph.analysis.id, runs: base.graph.runs, unmatchedRuns: [] },
@@ -522,7 +524,7 @@ describe('diffBuilds envelope', () => {
       screens: [{ route: '/a', seen: ['r'] }, { route: '/b', failed: ['r'] }, { route: '/c', static: false, seen: ['r'] }],
       transitions: [{ from: '/a', to: '/b', seen: [{ run: 'r' }] }, { from: '/a', to: { unresolved: 'href' } }],
     });
-    expect(diffBuilds(pairOf(graph, graph))).toMatchObject({ changes: [], gaps: [] });
+    expect(diffBuilds(pairOf(graph, graph), { screenshotDigest: sameDigest })).toMatchObject({ changes: [], gaps: [] });
   });
 
   it('orders screens before transitions, by route, whatever order the graphs list them in', () => {
@@ -559,5 +561,77 @@ describe('Change types', () => {
     // @ts-expect-error a newly-unverified transition carries witnesses with a source capture
     const unverified: Change = { kind: 'newly-unverified', subject, base: seen, head: { witnesses: [{ runId: run }] } };
     expect([added.kind, unverified.kind]).toEqual(['added', 'newly-unverified']);
+  });
+});
+
+describe('diffBuilds screenshot changes', () => {
+  const digestOf = (digests: Record<string, string>) => (path: string) => {
+    const found = digests[path];
+    if (found === undefined) throw new Error(`no digest for ${path}`);
+    return found;
+  };
+  const screenshotDiff = (base: GraphSpec, head: GraphSpec, digests: Record<string, string>) => {
+    const builtBase = build(base);
+    const builtHead = build({ commit: 'b', ...head });
+    return { base: builtBase, head: builtHead, diff: diffBuilds(pairOf(builtBase.graph, builtHead.graph), { screenshotDigest: digestOf(digests) }) };
+  };
+  const page = { route: '/a', seen: ['r'] };
+  const sessionRuns = [{ name: 'r' }, { name: 'rAdmin', session: admin }];
+  const bothSessions = { runs: sessionRuns, screens: [{ route: '/a', seen: ['r', 'rAdmin'] }] };
+
+  it('emits one change for the session whose screenshot differs', () => {
+    const { base, head, diff: result } = screenshotDiff(bothSessions, bothSessions, {
+      '/shots/a/r/a.png': 'same',
+      '/shots/b/r/a.png': 'same',
+      '/shots/a/rAdmin/a.png': 'before',
+      '/shots/b/rAdmin/a.png': 'after',
+    });
+    expect(result.changes).toEqual([
+      {
+        kind: 'screenshot-changed',
+        subject: expect.objectContaining({ kind: 'screen', routePattern: '/a' }),
+        session: admin,
+        base: { evidenceId: base.capture('rAdmin', '/a'), runId: base.run('rAdmin'), screenshot: '/shots/a/rAdmin/a.png', sha256: 'before' },
+        head: { evidenceId: head.capture('rAdmin', '/a'), runId: head.run('rAdmin'), screenshot: '/shots/b/rAdmin/a.png', sha256: 'after' },
+      },
+    ]);
+    expect(result.gaps).toEqual([]);
+  });
+
+  it('emits nothing when the digests are equal', () => {
+    const side = { ...crawled, screens: [page] };
+    const { diff: result } = screenshotDiff(side, side, { '/shots/a/r/a.png': 'same', '/shots/b/r/a.png': 'same' });
+    expect(result.changes).toEqual([]);
+  });
+
+  it('compares the newest run of each side and hashes only that capture', () => {
+    const twoRuns = { runs: [{ name: 'old' }, { name: 'new' }], screens: [{ route: '/a', seen: ['old', 'new'] }] };
+    const { diff: result } = screenshotDiff(twoRuns, twoRuns, {
+      '/shots/a/new/a.png': 'same',
+      '/shots/b/new/a.png': 'same',
+    });
+    expect(result.changes).toEqual([]);
+    const changed = screenshotDiff(twoRuns, twoRuns, { '/shots/a/new/a.png': 'before', '/shots/b/new/a.png': 'after' });
+    expect(changed.diff.changes).toMatchObject([
+      { kind: 'screenshot-changed', base: { runId: changed.base.run('new') }, head: { runId: changed.head.run('new') } },
+    ]);
+  });
+
+  it('says nothing about a session captured on one side only', () => {
+    const { diff: result } = screenshotDiff(
+      { runs: sessionRuns, screens: [{ route: '/a', seen: ['r', 'rAdmin'] }] },
+      { runs: sessionRuns, screens: [{ route: '/a', seen: ['r'] }] },
+      { '/shots/a/r/a.png': 'same', '/shots/b/r/a.png': 'same' },
+    );
+    expect(kindsOf(result.changes)).not.toContain('screenshot-changed');
+  });
+
+  it('ignores a capture that contradicts the screen', () => {
+    const { diff: result } = screenshotDiff(
+      { ...crawled, screens: [page] },
+      { ...crawled, screens: [{ route: '/a', failed: ['r'] }] },
+      {},
+    );
+    expect(kindsOf(result.changes)).toEqual(['status-changed']);
   });
 });

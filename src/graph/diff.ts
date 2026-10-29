@@ -5,7 +5,9 @@ import {
   type AnalyzerVersion,
   type Application,
   type AppKey,
+  type ArtifactPath,
   type BuildGraph,
+  type CaptureEvidence,
   type EvidenceId,
   type EvidenceObservation,
   type NonEmpty,
@@ -101,7 +103,26 @@ type ChangeOf<S extends Subject, W> =
   | { readonly kind: 'newly-observed'; readonly subject: S; readonly base: Unseen<W>; readonly head: Seen }
   | { readonly kind: 'status-changed'; readonly subject: S; readonly base: Seen; readonly head: Seen };
 
-export type Change = ChangeOf<ScreenSubject, ScreenWitness> | ChangeOf<TransitionSubject, TransitionWitness>;
+export type CaptureCite = {
+  readonly evidenceId: EvidenceId;
+  readonly runId: RunId;
+  readonly screenshot: ArtifactPath;
+  readonly sha256: string;
+};
+
+// A fact about two captures of one screen, not a verdict: a changed picture is not a regression.
+export type ScreenshotChanged = {
+  readonly kind: 'screenshot-changed';
+  readonly subject: ScreenSubject;
+  readonly session: Session;
+  readonly base: CaptureCite;
+  readonly head: CaptureCite;
+};
+
+export type Change =
+  | ChangeOf<ScreenSubject, ScreenWitness>
+  | ChangeOf<TransitionSubject, TransitionWitness>
+  | ScreenshotChanged;
 
 export type GapReason = 'no-run-in-session' | 'not-exhausted' | 'source-not-captured' | 'not-link-walked';
 export type Gap = {
@@ -343,13 +364,74 @@ function classify<S extends Subject, W>(
   return { changes, gaps };
 }
 
+type NewestCapture = { readonly session: Session; readonly evidence: CaptureEvidence; readonly run: Run };
+
+// The newest supporting capture of each session. A contradicting capture is an error page, not the screen.
+function newestCaptures(graph: BuildGraph, observations: readonly EvidenceObservation[]): Map<string, NewestCapture> {
+  const runById = new Map(graph.runs.map((run) => [run.id, run]));
+  const newest = new Map<string, NewestCapture>();
+  for (const observation of observations) {
+    const { evidence } = observation;
+    if (evidence.kind !== 'capture' || verdictOf(observation) !== 'supports') continue;
+    const run = runById.get(evidence.runId);
+    if (run === undefined) throw new Error(`Run ${evidence.runId} is not matched under ${graph.analysis.id}`);
+    const key = sessionKey(run.session);
+    const current = newest.get(key);
+    if (current === undefined || isNewer({ run, evidence }, current)) newest.set(key, { session: run.session, run, evidence });
+  }
+  return newest;
+}
+
+function isNewer(candidate: Omit<NewestCapture, 'session'>, current: NewestCapture): boolean {
+  const byTime = candidate.run.finishedAt.getTime() - current.run.finishedAt.getTime();
+  if (byTime !== 0) return byTime > 0;
+  return (compare(candidate.run.id, current.run.id) || compare(candidate.evidence.id, current.evidence.id)) < 0;
+}
+
+function screenshotChanges(
+  sides: { readonly base: Side; readonly head: Side },
+  screenshotDigest: ScreenshotDigest,
+): ScreenshotChanged[] {
+  const headScreens = new Map(sides.head.graph.screens.map((loaded) => [loaded.screen.id, loaded]));
+  const cite = ({ run, evidence }: NewestCapture): CaptureCite => ({
+    evidenceId: evidence.id,
+    runId: run.id,
+    screenshot: evidence.screenshot,
+    sha256: screenshotDigest(evidence.screenshot),
+  });
+  const changes: ScreenshotChanged[] = [];
+  for (const baseScreen of sides.base.graph.screens) {
+    const headScreen = headScreens.get(baseScreen.screen.id);
+    if (headScreen === undefined) continue;
+    const baseNewest = newestCaptures(sides.base.graph, baseScreen.observations);
+    const headNewest = newestCaptures(sides.head.graph, headScreen.observations);
+    const subject: ScreenSubject = {
+      kind: 'screen',
+      id: baseScreen.screen.id,
+      routePattern: baseScreen.screen.routePattern,
+    };
+    for (const [key, baseCapture] of [...baseNewest].sort(([a], [b]) => compare(a, b))) {
+      const headCapture = headNewest.get(key);
+      if (headCapture === undefined) continue;
+      const base = cite(baseCapture);
+      const headCite = cite(headCapture);
+      if (base.sha256 !== headCite.sha256) {
+        changes.push({ kind: 'screenshot-changed', subject, session: baseCapture.session, base, head: headCite });
+      }
+    }
+  }
+  return changes;
+}
+
 function subjectOrder(a: Subject, b: Subject): number {
   const rank = (subject: Subject) => (subject.kind === 'screen' ? 0 : 1);
   const route = (subject: Subject) => (subject.kind === 'screen' ? subject.routePattern : subject.from);
   return compare(rank(a), rank(b)) || compare(route(a), route(b)) || compare(a.id, b.id);
 }
 
-export function diffBuilds({ base, head }: ComparablePair): BuildDiff {
+export type ScreenshotDigest = (path: ArtifactPath) => string;
+
+export function diffBuilds({ base, head }: ComparablePair, { screenshotDigest }: { screenshotDigest: ScreenshotDigest }): BuildDiff {
   const sides = { base: indexSide(base), head: indexSide(head) };
   const ids = new Set([...sides.base.entries.keys(), ...sides.head.entries.keys()]);
   const changes: Change[] = [];
@@ -384,6 +466,7 @@ export function diffBuilds({ base, head }: ComparablePair): BuildDiff {
       }
     }
   }
+  changes.push(...screenshotChanges(sides, screenshotDigest));
   changes.sort((a, b) => subjectOrder(a.subject, b.subject) || compare(a.kind, b.kind));
   gaps.sort((a, b) => subjectOrder(a.subject, b.subject) || compare(a.seenIn, b.seenIn));
   const side = ({ graph }: Side): DiffSide => ({

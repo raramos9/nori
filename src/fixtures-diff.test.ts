@@ -14,10 +14,14 @@ import { pairKey, resolvedPairs } from './testing/resolved-pairs.js';
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
 const CREATED_AT = new Date('2026-01-01T00:00:00Z');
 
+const noScreenshots = (): never => {
+  throw new Error('a build without captures has no screenshot to hash');
+};
+
 function diffOf(base: BuildGraph, head: BuildGraph): BuildDiff {
   const pair = comparable(base, head);
   if (pair.kind !== 'comparable') throw new Error(pair.kind);
-  return diffBuilds(pair.pair);
+  return diffBuilds(pair.pair, { screenshotDigest: noScreenshots });
 }
 
 function graphPairs(graph: BuildGraph): Set<string> {

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +15,7 @@ import {
   type Subject,
 } from '../graph/diff.js';
 import { sessionKey } from '../graph/ids.js';
-import type { BuildGraph, CommitSha } from '../graph/model.js';
+import type { ArtifactPath, BuildGraph, CommitSha } from '../graph/model.js';
 import { resolveRoot } from '../next/project.js';
 import { addDetachedWorktree, removeWorktree, resolveCommit, showPrefix } from '../repo/git.js';
 import type { Command } from './command.js';
@@ -57,13 +59,15 @@ async function scanCommit({
   }
 }
 
+const screenshotDigest = (path: ArtifactPath): string => createHash('sha256').update(readFileSync(path)).digest('hex');
+
 export async function diffCommits({ root, prefix, base, head }: DiffRequest): Promise<BuildDiff> {
   const baseGraph = await scanCommit({ root, prefix, commitSha: base.commitSha });
   const headGraph = await scanCommit({ root, prefix, commitSha: head.commitSha });
   const pair = comparable(baseGraph, headGraph);
   switch (pair.kind) {
     case 'comparable':
-      return diffBuilds(pair.pair);
+      return diffBuilds(pair.pair, { screenshotDigest });
     case 'different-apps':
       throw new NoriError(`${base.ref} and ${head.ref} are different apps: ${pair.base.id} and ${pair.head.id}`);
     case 'different-analyzers':
@@ -114,6 +118,8 @@ function kindWord(kind: Change['kind']): string {
       return 'newly observed';
     case 'status-changed':
       return 'status changed';
+    case 'screenshot-changed':
+      return 'screenshot differs';
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;
@@ -121,7 +127,7 @@ function kindWord(kind: Change['kind']): string {
   }
 }
 
-const KIND_WIDTH = 'newly unverified'.length;
+const KIND_WIDTH = 'screenshot differs'.length;
 
 function runList(witnesses: readonly { readonly runId: string }[]): string {
   return witnesses.map(({ runId }) => runId).join(', ');
@@ -149,6 +155,8 @@ function changeDetail(change: Change): string {
       return ` (observed in head; ${missedText(change, 'base', change.base.witnesses)})`;
     case 'status-changed':
       return ` (${change.base.status} -> ${change.head.status})`;
+    case 'screenshot-changed':
+      return ` (${sessionKey(change.session)}: ${change.base.evidenceId} -> ${change.head.evidenceId})`;
     default: {
       const _exhaustive: never = change;
       return _exhaustive;
@@ -241,7 +249,10 @@ export function formatDiffMarkdown({ diff, refs }: { diff: BuildDiff; refs: Refs
     lines.push('No changes.');
   } else {
     lines.push('| Change | Subject |', '| --- | --- |');
-    for (const change of diff.changes) lines.push(`| ${kindWord(change.kind)} | ${subjectCell(change.subject)} |`);
+    for (const change of diff.changes) {
+      const detail = change.kind === 'screenshot-changed' ? cell(changeDetail(change)) : '';
+      lines.push(`| ${kindWord(change.kind)} | ${subjectCell(change.subject)}${detail} |`);
+    }
   }
   if (diff.gaps.length > 0) {
     lines.push(

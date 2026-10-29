@@ -9,6 +9,7 @@ import {
   parseAnalysisId,
   parseAnalyzerVersion,
   parseAppKey,
+  parseArtifactPath,
   parseCommitSha,
   parseEvidenceId,
   parseOrigin,
@@ -93,7 +94,7 @@ describe('nori diff CLI', () => {
     expect(lines[0]).toMatch(/^diff app_[0-9a-f]{16}, analyzer /);
     expect(lines[1]).toBe(`base ${history.base} ${history.base.slice(0, 7)}, 0 runs`);
     expect(lines[2]).toBe(`head HEAD ${history.head.slice(0, 7)}, 0 runs`);
-    for (const screen of expected.screens.added) expect(text.stdout).toContain(`added             screen ${screen}`);
+    for (const screen of expected.screens.added) expect(text.stdout).toContain(`added               screen ${screen}`);
     for (const { from, to } of expected.edges.added) {
       expect(text.stdout).toMatch(new RegExp(`added +transition ${from} -[a-z-]+-> ${to}$`, 'm'));
     }
@@ -224,6 +225,13 @@ describe('diff renderers', () => {
       head: { witnesses: [{ runId: run(1), sourceCapture: parseEvidenceId(`evd_${id(1)}`) }, { runId: run(2), sourceCapture: parseEvidenceId(`evd_${id(2)}`) }] },
     },
     { kind: 'status-changed', subject: screen('/login'), base: seen('observed', 5), head: seen('failed', 6) },
+    {
+      kind: 'screenshot-changed',
+      subject: screen('/settings'),
+      session: signedIn,
+      base: { evidenceId: parseEvidenceId(`evd_${id(5)}`), runId: run(1), screenshot: parseArtifactPath('/a.png'), sha256: 'aa' },
+      head: { evidenceId: parseEvidenceId(`evd_${id(6)}`), runId: run(3), screenshot: parseArtifactPath('/b.png'), sha256: 'bb' },
+    },
     { kind: 'newly-observed', subject: unresolved, base: { witnesses: [{ runId: run(7), sourceCapture: parseEvidenceId(`evd_${id(7)}`) }] }, head: seen('observed', 8) },
   ];
   const gaps: Gap[] = [
@@ -249,11 +257,12 @@ describe('diff renderers', () => {
       'head feature bbbbbbb, 1 run',
       `warning: 2 base runs did not match this analysis: run_${id(11)}, run_${id(12)}`,
       '',
-      '4 changes',
-      '  added             screen /reports',
-      `  newly unverified  transition /a -router-push-> /b (observed in base; head runs run_${id(1)}, run_${id(2)} walked /a and missed it)`,
-      '  status changed    screen /login (observed -> failed)',
-      `  newly observed    transition /b -router-push-> ? a | b ? \`x\` : y (dynamic-expression) (observed in head; base runs run_${id(7)} walked /b and missed it)`,
+      '5 changes',
+      '  added               screen /reports',
+      `  newly unverified    transition /a -router-push-> /b (observed in base; head runs run_${id(1)}, run_${id(2)} walked /a and missed it)`,
+      '  status changed      screen /login (observed -> failed)',
+      `  screenshot differs  screen /settings (storage-state:signed-in: evd_${id(5)} -> evd_${id(6)})`,
+      `  newly observed      transition /b -router-push-> ? a | b ? \`x\` : y (dynamic-expression) (observed in head; base runs run_${id(7)} walked /b and missed it)`,
       '',
       '4 coverage gaps (seen on one side, not comparable)',
       '  screen /x seen in base (anonymous, storage-state:signed-in): no head run in that session',
@@ -275,6 +284,7 @@ describe('diff renderers', () => {
     expect(lines).toContain('| Change | Subject |');
     expect(lines).toContain('| added | `screen /reports` |');
     expect(lines).toContain('| status changed | `screen /login` |');
+    expect(lines).toContain(`| screenshot differs | \`screen /settings\` (storage-state:signed-in: evd_${id(5)} -> evd_${id(6)}) |`);
     expect(lines).toContain('| newly observed | ``` transition /b -router-push-> ? a \\| b ? `x` : y (dynamic-expression) ``` |'.replace('```', '``').replace('```', '``'));
     expect(lines).toContain('<summary>4 coverage gaps</summary>');
     expect(lines).toContain('| Subject | Seen in | Why not compared |');
