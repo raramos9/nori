@@ -48,6 +48,7 @@ type ScreenSpec = {
   readonly static?: boolean;
   readonly seen?: readonly string[];
   readonly failed?: readonly string[];
+  readonly pages?: readonly string[];
 };
 type TransitionSpec = {
   readonly from: string;
@@ -133,7 +134,7 @@ function build(spec: GraphSpec) {
     screenId({ appKey: application.id, routePattern: parseRoutePattern(route) });
   const stateOf = (route: string) => stateId({ screenId: screenIdOf(route), key: DEFAULT_STATE_KEY });
 
-  const screens = spec.screens.map(({ route, static: isStatic = true, seen = [], failed = [] }): LoadedScreen => {
+  const screens = spec.screens.map(({ route, static: isStatic = true, seen = [], failed = [], pages = [] }): LoadedScreen => {
     const routePattern = parseRoutePattern(route);
     const observations: ScreenObservation[] = [
       ...(isStatic ? [{ evidence: staticEvidence(), verdict: 'supports' } as const] : []),
@@ -141,6 +142,12 @@ function build(spec: GraphSpec) {
         evidence: captureFor(name, route),
         match: { verdict: 'supports', rule: 'rendered', url: pageUrl(route), pattern: routePattern },
       })),
+      ...seen.flatMap((name) =>
+        pages.map((page): ScreenObservation => ({
+          evidence: captureFor(name, page),
+          match: { verdict: 'supports', rule: 'rendered', url: pageUrl(page), pattern: routePattern },
+        })),
+      ),
       ...failed.map((name): ScreenObservation => ({
         evidence: captureFor(name, route, 500),
         match: { verdict: 'contradicts', rule: 'server-error', url: pageUrl(route), pattern: routePattern, httpStatus: 500 },
@@ -591,6 +598,7 @@ describe('diffBuilds screenshot changes', () => {
         kind: 'screenshot-changed',
         subject: expect.objectContaining({ kind: 'screen', routePattern: '/a' }),
         session: admin,
+        path: '/a',
         base: { evidenceId: base.capture('rAdmin', '/a'), runId: base.run('rAdmin'), screenshot: '/shots/a/rAdmin/a.png', sha256: 'before' },
         head: { evidenceId: head.capture('rAdmin', '/a'), runId: head.run('rAdmin'), screenshot: '/shots/b/rAdmin/a.png', sha256: 'after' },
       },
@@ -633,5 +641,13 @@ describe('diffBuilds screenshot changes', () => {
       {},
     );
     expect(kindsOf(result.changes)).toEqual(['status-changed']);
+  });
+
+  it('compares captures of the same page only, so two pages of a dynamic screen are not mistaken for a change', () => {
+    const dynamic = { ...crawled, screens: [{ route: '/a/[id]', seen: ['r'], pages: ['/a/1', '/a/2'] }] };
+    const unchanged = { '/shots/a/r/a/[id].png': 'x', '/shots/b/r/a/[id].png': 'x', '/shots/a/r/a/1.png': 'one', '/shots/b/r/a/1.png': 'one' };
+    expect(screenshotDiff(dynamic, dynamic, { ...unchanged, '/shots/a/r/a/2.png': 'two', '/shots/b/r/a/2.png': 'two' }).diff.changes).toEqual([]);
+    const { diff: result } = screenshotDiff(dynamic, dynamic, { ...unchanged, '/shots/a/r/a/2.png': 'before', '/shots/b/r/a/2.png': 'after' });
+    expect(result.changes).toMatchObject([{ kind: 'screenshot-changed', path: '/a/2' }]);
   });
 });

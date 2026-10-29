@@ -229,6 +229,7 @@ describe('diff renderers', () => {
       kind: 'screenshot-changed',
       subject: screen('/settings'),
       session: signedIn,
+      path: '/settings',
       base: { evidenceId: parseEvidenceId(`evd_${id(5)}`), runId: run(1), screenshot: parseArtifactPath('/a.png'), sha256: 'aa' },
       head: { evidenceId: parseEvidenceId(`evd_${id(6)}`), runId: run(3), screenshot: parseArtifactPath('/b.png'), sha256: 'bb' },
     },
@@ -261,7 +262,7 @@ describe('diff renderers', () => {
       '  added               screen /reports',
       `  newly unverified    transition /a -router-push-> /b (observed in base; head runs run_${id(1)}, run_${id(2)} walked /a and missed it)`,
       '  status changed      screen /login (observed -> failed)',
-      `  screenshot differs  screen /settings (storage-state:signed-in: evd_${id(5)} -> evd_${id(6)})`,
+      `  screenshot differs  screen /settings (storage-state:signed-in /settings: evd_${id(5)} -> evd_${id(6)})`,
       `  newly observed      transition /b -router-push-> ? a | b ? \`x\` : y (dynamic-expression) (observed in head; base runs run_${id(7)} walked /b and missed it)`,
       '',
       '4 coverage gaps (seen on one side, not comparable)',
@@ -284,7 +285,7 @@ describe('diff renderers', () => {
     expect(lines).toContain('| Change | Subject |');
     expect(lines).toContain('| added | `screen /reports` |');
     expect(lines).toContain('| status changed | `screen /login` |');
-    expect(lines).toContain(`| screenshot differs | \`screen /settings\` (storage-state:signed-in: evd_${id(5)} -> evd_${id(6)}) |`);
+    expect(lines).toContain(`| screenshot differs | \`screen /settings\` (storage-state:signed-in /settings: evd_${id(5)} -> evd_${id(6)}) |`);
     expect(lines).toContain('| newly observed | ``` transition /b -router-push-> ? a \\| b ? `x` : y (dynamic-expression) ``` |'.replace('```', '``').replace('```', '``'));
     expect(lines).toContain('<summary>4 coverage gaps</summary>');
     expect(lines).toContain('| Subject | Seen in | Why not compared |');

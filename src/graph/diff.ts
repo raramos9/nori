@@ -115,6 +115,7 @@ export type ScreenshotChanged = {
   readonly kind: 'screenshot-changed';
   readonly subject: ScreenSubject;
   readonly session: Session;
+  readonly path: string;
   readonly base: CaptureCite;
   readonly head: CaptureCite;
 };
@@ -364,9 +365,10 @@ function classify<S extends Subject, W>(
   return { changes, gaps };
 }
 
-type NewestCapture = { readonly session: Session; readonly evidence: CaptureEvidence; readonly run: Run };
+type NewestCapture = { readonly session: Session; readonly path: string; readonly evidence: CaptureEvidence; readonly run: Run };
 
-// The newest supporting capture of each session. A contradicting capture is an error page, not the screen.
+// The newest supporting capture of each session and page. A dynamic screen is many pages, and two
+// different pages of it always differ, so only captures of the same path are comparable. A contradicting capture is an error page, not the screen.
 function newestCaptures(graph: BuildGraph, observations: readonly EvidenceObservation[]): Map<string, NewestCapture> {
   const runById = new Map(graph.runs.map((run) => [run.id, run]));
   const newest = new Map<string, NewestCapture>();
@@ -375,14 +377,18 @@ function newestCaptures(graph: BuildGraph, observations: readonly EvidenceObserv
     if (evidence.kind !== 'capture' || verdictOf(observation) !== 'supports') continue;
     const run = runById.get(evidence.runId);
     if (run === undefined) throw new Error(`Run ${evidence.runId} is not matched under ${graph.analysis.id}`);
-    const key = sessionKey(run.session);
+    const { pathname, search } = new URL(evidence.url);
+    const path = pathname + search;
+    const key = `${sessionKey(run.session)} ${path}`;
     const current = newest.get(key);
-    if (current === undefined || isNewer({ run, evidence }, current)) newest.set(key, { session: run.session, run, evidence });
+    if (current === undefined || isNewer({ run, evidence }, current)) {
+      newest.set(key, { session: run.session, path, run, evidence });
+    }
   }
   return newest;
 }
 
-function isNewer(candidate: Omit<NewestCapture, 'session'>, current: NewestCapture): boolean {
+function isNewer(candidate: Pick<NewestCapture, 'run' | 'evidence'>, current: NewestCapture): boolean {
   const byTime = candidate.run.finishedAt.getTime() - current.run.finishedAt.getTime();
   if (byTime !== 0) return byTime > 0;
   return (compare(candidate.run.id, current.run.id) || compare(candidate.evidence.id, current.evidence.id)) < 0;
@@ -416,7 +422,7 @@ function screenshotChanges(
       const base = cite(baseCapture);
       const headCite = cite(headCapture);
       if (base.sha256 !== headCite.sha256) {
-        changes.push({ kind: 'screenshot-changed', subject, session: baseCapture.session, base, head: headCite });
+        changes.push({ kind: 'screenshot-changed', subject, session: baseCapture.session, path: baseCapture.path, base, head: headCite });
       }
     }
   }

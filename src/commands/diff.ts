@@ -156,7 +156,7 @@ function changeDetail(change: Change): string {
     case 'status-changed':
       return ` (${change.base.status} -> ${change.head.status})`;
     case 'screenshot-changed':
-      return ` (${sessionKey(change.session)}: ${change.base.evidenceId} -> ${change.head.evidenceId})`;
+      return ` (${sessionKey(change.session)} ${change.path}: ${change.base.evidenceId} -> ${change.head.evidenceId})`;
     default: {
       const _exhaustive: never = change;
       return _exhaustive;
