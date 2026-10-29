@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ExplorerCapture, ExplorerGraph, ExplorerTransition, SourceRef } from '../../src/explorer/view.js';
+import type { TestRef, TransitionTests } from '../../src/graph/tests.js';
 import type { ScreenId } from '../../src/graph/model.js';
 import { fetchSnippet, type SourceSnippet } from './api.js';
 import type { Ghost, GraphIndex, Link, Selection } from './flow.js';
@@ -109,6 +110,35 @@ function Captures({ captures }: { captures: readonly ExplorerCapture[] }) {
   );
 }
 
+function Tests({ tests }: { tests: TransitionTests }) {
+  const { passing, failing, walkedInFailing } = tests;
+  if (passing.length + failing.length + walkedInFailing.length === 0) return null;
+  const key = (ref: TestRef) => `${ref.importId} ${ref.caseKey} ${ref.retry} ${ref.seq}`;
+  return (
+    <div className="tests">
+      <p className="muted small">Tests</p>
+      <ul>
+        {failing.map((ref) => (
+          <li key={key(ref)} className="test-failed">
+            failed in test {ref.title}
+            <div className="mono small">{ref.message}</div>
+          </li>
+        ))}
+        {passing.map((ref) => (
+          <li key={key(ref)}>
+            passed in test {ref.title} <span className="muted small">({ref.asserted ? 'asserted' : 'no assertions'})</span>
+          </li>
+        ))}
+        {walkedInFailing.map((ref) => (
+          <li key={key(ref)} className="muted">
+            walked in failing test {ref.title}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function TransitionCall({
   transition,
   root,
@@ -147,6 +177,7 @@ function TransitionCall({
           <code className="expression">{target.expression}</code>
         </div>
       ) : null}
+      <Tests tests={transition.tests} />
       <Sources root={root} sources={transition.sources} />
     </li>
   );

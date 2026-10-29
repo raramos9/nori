@@ -11,13 +11,14 @@ import {
   type Node,
 } from '@xyflow/react';
 import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import type { ExplorerGraph } from '../../src/explorer/view.js';
+import type { Coverage, ExplorerGraph } from '../../src/explorer/view.js';
 import type { EvidenceStatus, ScreenId } from '../../src/graph/model.js';
 import { fetchGraph } from './api.js';
 import {
   countTransitions,
   focusGraph,
   ghostId,
+  hasFailingTest,
   indexGraph,
   matchingScreens,
   STATUSES,
@@ -103,6 +104,27 @@ function Header({ graph, filters, onFilters, query, onQuery, shown }: {
         {query.trim() !== '' ? <span className="muted small">{shown.matches} / {shown.screens}</span> : null}
       </div>
     </header>
+  );
+}
+
+function CoverageBlock({ coverage }: { coverage: Coverage }) {
+  const { denominator, inferred } = coverage;
+  const rows = [
+    ['inferred', inferred],
+    ['observed', coverage.observed],
+    ['exercised by a passing test', coverage.exercisedByPassingTest],
+  ] as const;
+  return (
+    <section className="coverage" aria-label="Coverage">
+      <ul>
+        {rows.map(([label, count]) => (
+          <li key={label}>
+            {label}: {count} of {inferred} {denominator}
+          </li>
+        ))}
+      </ul>
+      <p className="muted small">Behavior nori did not discover is not counted.</p>
+    </section>
   );
 }
 
@@ -244,7 +266,7 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
         sourceHandle: backward ? 'out-back' : 'out',
         targetHandle: backward ? 'in-back' : 'in',
         label: count > 1 ? String(count) : undefined,
-        className: classFor(`resolved status-${link.status}`, link.source, link.target, searching && !(matches.has(link.source) || matches.has(link.target))),
+        className: classFor(`resolved status-${link.status}${hasFailingTest(link.transitions) ? ' test-failed' : ''}`, link.source, link.target, searching && !(matches.has(link.source) || matches.has(link.target))),
         markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
         selected: selection?.kind === 'link' && selection.id === link.id,
         interactionWidth: 16,
@@ -258,7 +280,7 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
         sourceHandle: 'out',
         target: ghost.id,
         label: count > 1 ? String(count) : undefined,
-        className: classFor('unresolved', ghost.sourceScreenId, ghost.id, searching && !matches.has(ghost.sourceScreenId)),
+        className: classFor(hasFailingTest(ghost.transitions) ? 'unresolved test-failed' : 'unresolved', ghost.sourceScreenId, ghost.id, searching && !matches.has(ghost.sourceScreenId)),
         markerEnd: { type: MarkerType.Arrow, width: 12, height: 12 },
         selected: selection?.kind === 'ghost' && selection.id === ghost.id,
         interactionWidth: 16,
@@ -315,6 +337,7 @@ function Explorer({ graph }: { graph: ExplorerGraph }) {
         onQuery={setQuery}
         shown={{ screens: rendered.screens.length, matches: matches.size }}
       />
+      <CoverageBlock coverage={graph.coverage} />
       <div className="stage">
         <div className="canvas">
           {trail.length > 0 ? (

@@ -3,13 +3,15 @@ import {
   parseEvidenceId,
   parseRoutePattern,
   parseScreenId,
+  parseTestCaseKey,
+  parseTestImportId,
   parseTransitionId,
   type EvidenceStatus,
   type ScreenId,
 } from '../../src/graph/model.js';
 import type { ExplorerGraph, ExplorerScreen, ExplorerTarget, ExplorerTransition } from '../../src/explorer/view.js';
 import { NO_TESTS } from '../../src/graph/tests.js';
-import { focusGraph, indexGraph, matchingScreens, STATUSES, visibleGraph, walk, type Filters } from './flow.js';
+import { focusGraph, hasFailingTest, indexGraph, matchingScreens, STATUSES, visibleGraph, walk, type Filters } from './flow.js';
 import { layoutGraph } from './layout.js';
 
 const hex = (n: number) => n.toString(16).padStart(16, '0');
@@ -160,5 +162,23 @@ describe('walk', () => {
     expect(trail).toEqual([home.id, about.id, pricing.id]);
     expect(walk(trail, about.id)).toEqual([home.id, about.id]);
     expect(walk(trail, pricing.id)).toEqual(trail);
+  });
+});
+
+describe('hasFailingTest', () => {
+  const failure = {
+    importId: parseTestImportId(`imp_${hex(1)}`),
+    caseKey: parseTestCaseKey(`tcs_${hex(1)}`),
+    title: 't',
+    outcome: 'failed',
+    retry: 0,
+    seq: 0,
+  } as const;
+  const [plain] = graph.transitions;
+
+  it('marks a link only for a failing test, never for walkedInFailing', () => {
+    expect(hasFailingTest([plain!])).toBe(false);
+    expect(hasFailingTest([{ ...plain!, tests: { passing: [], failing: [], walkedInFailing: [failure] } }])).toBe(false);
+    expect(hasFailingTest([plain!, { ...plain!, tests: { passing: [], failing: [{ ...failure, message: 'm' }], walkedInFailing: [] } }])).toBe(true);
   });
 });

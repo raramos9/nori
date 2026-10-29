@@ -56,6 +56,10 @@ export function indexGraph(graph: ExplorerGraph): GraphIndex {
   return { screens: new Map(graph.screens.map((screen) => [screen.id, screen])), outgoing, incomingCount };
 }
 
+export function hasFailingTest(transitions: readonly ExplorerTransition[]): boolean {
+  return transitions.some(({ tests }) => tests.failing.length > 0);
+}
+
 export function countTransitions(graph: ExplorerGraph): { resolved: number; unresolved: number } {
   const resolved = graph.transitions.filter(({ target }) => target.kind === 'screen').length;
   return { resolved, unresolved: graph.transitions.length - resolved };
