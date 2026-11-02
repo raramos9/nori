@@ -45,16 +45,16 @@ describe('parseStorageState', () => {
 
 const PAGE = 'export default function Page() { return null; }\n';
 const tempDirs: string[] = [];
-let sourceToTouch: string | null = null;
+let touch: { readonly file: string; readonly content: string } | null = null;
 let touched = false;
 
 const html = (links: readonly string[]) =>
   `<!doctype html><title>t</title><body>${links.map((href) => `<a href="${href}">${href}</a>`).join('')}</body>`;
 
 const app: Server = createServer((request, response) => {
-  if (request.url === '/about' && sourceToTouch !== null && !touched) {
+  if (request.url === '/about' && touch !== null && !touched) {
     touched = true;
-    writeFileSync(sourceToTouch, `${PAGE}// edited mid-crawl\n`);
+    writeFileSync(touch.file, touch.content);
   }
   response.setHeader('content-type', 'text/html');
   response.end(request.url === '/about' ? html(['/']) : html(['/about']));
@@ -73,20 +73,28 @@ afterAll(() => {
   app.close();
 });
 afterEach(() => {
-  sourceToTouch = null;
+  touch = null;
   touched = false;
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function nextProject(): string {
+const GENERATED = 'generated/links.ts';
+const generatedLinks = (...lines: readonly string[]) => lines.map((line) => `${line}\n`).join('');
+
+function nextProject({ generated = false }: { generated?: boolean } = {}): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'nori-verify-')));
   tempDirs.push(root);
   const files: Record<string, string> = {
     'package.json': JSON.stringify({ name: 'fixture', dependencies: { next: '15.0.0' } }),
     'app/layout.tsx': PAGE,
-    'app/page.tsx': `import Link from 'next/link';\nexport default function Page() { return <Link href="/about">about</Link>; }\n`,
+    'app/page.tsx': generated
+      ? `import Link from 'next/link';\nimport { ABOUT } from '../generated/links';\nexport default function Page() { return <Link href={ABOUT}>about</Link>; }\n`
+      : `import Link from 'next/link';\nexport default function Page() { return <Link href="/about">about</Link>; }\n`,
     'app/about/page.tsx': PAGE,
     'app/users/[id]/page.tsx': PAGE,
+    ...(generated
+      ? { '.gitignore': 'generated/\n', [GENERATED]: generatedLinks("export const ABOUT = '/about';", "export const HOME = '/';") }
+      : {}),
   };
   for (const [file, content] of Object.entries(files)) {
     mkdirSync(dirname(join(root, file)), { recursive: true });
@@ -156,7 +164,7 @@ describe('verify', { timeout: 60_000 }, () => {
 
   it('does not ingest a run whose sources changed during the crawl', async (test) => {
     const root = nextProject();
-    sourceToTouch = join(root, 'app/about/page.tsx');
+    touch = { file: join(root, 'app/about/page.tsx'), content: `${PAGE}// edited mid-crawl\n` };
     const report = await verify(options(root)).catch((error: unknown) => {
       if (error instanceof NoriError && /Chrome is not installed/.test(error.message)) test.skip('system Chrome is not installed');
       throw error;
@@ -166,5 +174,28 @@ describe('verify', { timeout: 60_000 }, () => {
 
     expect((await storedBuild(report.snapshot))?.runs).toEqual([]);
     expect(readdirSync(join(appHome(report.snapshot.appKey), 'runs'))).toEqual([]);
+  });
+
+  it('ingests a run when a gitignored generated input is rewritten without changing the graph', async (test) => {
+    const root = nextProject({ generated: true });
+    touch = { file: join(root, GENERATED), content: generatedLinks("export const HOME = '/';", "export const ABOUT = '/about';") };
+    const report = await verify(options(root)).catch((error: unknown) => {
+      if (error instanceof NoriError && /Chrome is not installed/.test(error.message)) test.skip('system Chrome is not installed');
+      throw error;
+    });
+    expect(touched).toBe(true);
+    expect(report.runs.map(({ kind }) => kind)).toEqual(['matched-now']);
+    expect((await storedBuild(report.snapshot))?.runs).toHaveLength(1);
+  });
+
+  it('does not ingest a run when a gitignored generated input changes the graph during the crawl', async (test) => {
+    const root = nextProject({ generated: true });
+    touch = { file: join(root, GENERATED), content: generatedLinks("export const ABOUT = '/users/1';", "export const HOME = '/';") };
+    const report = await verify(options(root)).catch((error: unknown) => {
+      if (error instanceof NoriError && /Chrome is not installed/.test(error.message)) test.skip('system Chrome is not installed');
+      throw error;
+    });
+    expect(report.runs[0]).toMatchObject({ kind: 'source-changed', changed: 'inputs' });
+    expect((await storedBuild(report.snapshot))?.runs).toEqual([]);
   });
 });

@@ -11,6 +11,7 @@ import {
   type RunId,
   type Session,
   type Snapshot,
+  type StaticIngestion,
   type StepOutcome,
 } from '../graph/model.js';
 import { NoriError } from '../errors.js';
@@ -102,10 +103,23 @@ async function sourceChange(analyzed: Analyzed, session: Session, path: string):
     return { kind: 'source-changed', session, changed: 'sources', before: snapshot.sourceHash, after };
   }
   const inputsAfter = await inputsHash(analyzed.inputs);
-  if (inputsAfter !== analysis.inputsHash) {
-    return { kind: 'source-changed', session, changed: 'inputs', before: analysis.inputsHash, after: inputsAfter };
-  }
-  return null;
+  if (inputsAfter === analysis.inputsHash) return null;
+  const reanalyzed = await analyze({ path, createdAt: analysis.createdAt });
+  if (staticGraphKey(reanalyzed.ingestion) === staticGraphKey(analyzed.ingestion)) return null;
+  return { kind: 'source-changed', session, changed: 'inputs', before: analysis.inputsHash, after: inputsAfter };
+}
+
+// Generated files a dev server rewrites (fumadocs' .source) change the inputs hash on every compile
+// without changing what the analysis found, so a crawl is refused only when the graph itself differs.
+function staticGraphKey({ screens, transitions, evidence, observations }: StaticIngestion): string {
+  const sorted = (values: readonly unknown[]) => values.map((value) => JSON.stringify(value)).sort();
+  const evidenceKey = new Map(evidence.map(({ id, span, extractor }) => [id, JSON.stringify([span, extractor])]));
+  return JSON.stringify([
+    sorted(screens),
+    sorted(transitions),
+    sorted(evidence.map(({ span, extractor }) => [span, extractor])),
+    sorted(observations.map(({ evidenceId, subject, verdict }) => [evidenceKey.get(evidenceId), subject, verdict])),
+  ]);
 }
 
 export function outcomeRunId(outcome: RunOutcome): RunId {
