@@ -76,6 +76,10 @@ This checks out both commits into temporary worktrees, so your uncommitted chang
 
 To get the runtime changes too, run `nori verify` on a clean checkout of each commit first. A crawl of a working tree with uncommitted changes belongs to that dirty tree, not to the commit. Without crawls, the diff covers the static map only.
 
+### Comment the diff on a pull request
+
+`action/` holds a GitHub Action that posts this diff as one PR comment and edits it in place on later pushes. See [action/README.md](action/README.md). `nori comment <markdown-file>` is the step that does the posting.
+
 ### Explore the map
 
 ```sh
