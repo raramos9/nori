@@ -1,0 +1,61 @@
+name: nori diff
+description: Compare the behavioral map of a pull request's base and head, and keep the result in one PR comment.
+inputs:
+  path:
+    description: Directory of the web app inside the repository.
+    default: .
+  github-token:
+    description: Token used to read and write the PR comment.
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Set up pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 11
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+    - name: Build nori
+      shell: bash
+      working-directory: ${{ github.action_path }}/..
+      run: |
+        set -euo pipefail
+        pnpm install --frozen-lockfile
+        pnpm build
+    - name: Fetch base and head
+      shell: bash
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        set -euo pipefail
+        for sha in "$BASE_SHA" "$HEAD_SHA"; do
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::nori diff needs a pull_request event with 40-hex base and head SHAs"
+            exit 1
+          fi
+        done
+        git -C "$GITHUB_WORKSPACE" fetch --no-tags --depth=1 origin "$BASE_SHA" "$HEAD_SHA"
+    - name: Diff
+      shell: bash
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        APP_PATH: ${{ inputs.path }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        cd "$GITHUB_WORKSPACE"
+        node "$ACTION_PATH/../dist/cli.js" diff "$BASE_SHA" "$HEAD_SHA" "$APP_PATH" --markdown > "$RUNNER_TEMP/nori-diff.md"
+        cat "$RUNNER_TEMP/nori-diff.md" >> "$GITHUB_STEP_SUMMARY"
+    - name: Comment
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        node "$ACTION_PATH/../dist/cli.js" comment "$RUNNER_TEMP/nori-diff.md"
