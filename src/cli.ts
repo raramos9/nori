@@ -2,6 +2,7 @@
 import { parseArgs } from 'node:util';
 import { errorCode, NoriError } from './errors.js';
 import type { Command } from './commands/command.js';
+import { commentCommand } from './commands/comment.js';
 import { diffCommand } from './commands/diff.js';
 import { exploreCommand } from './commands/explore.js';
 import { importCommand } from './commands/import.js';
@@ -17,6 +18,7 @@ const COMMANDS: ReadonlyMap<string, Command> = new Map([
   ['mcp', mcpCommand],
   ['verify', verifyCommand],
   ['import', importCommand],
+  ['comment', commentCommand],
 ]);
 
 function help(): string {
