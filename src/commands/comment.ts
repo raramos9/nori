@@ -22,7 +22,9 @@ export type CommentOutcome =
   | { readonly kind: 'skipped-read-only'; readonly status: number };
 
 const EventSchema = z.object({ pull_request: z.object({ number: z.number().int().positive() }) });
-const CommentPageSchema = z.array(z.object({ id: z.number().int(), body: z.string().nullish() }));
+const CommentPageSchema = z.array(
+  z.object({ id: z.number().int(), body: z.string().nullish(), user: z.object({ type: z.string() }).nullish() }),
+);
 const CommentIdSchema = z.object({ id: z.number().int() });
 const RepositorySchema = z.string().regex(/^[\w.-]+\/[\w.-]+$/);
 
@@ -30,8 +32,8 @@ export function commentBody(markdown: string): string {
   const body = `${MARKER}\n${markdown}`;
   if (body.length <= COMMENT_LIMIT) return body;
   const budget = COMMENT_LIMIT - TRUNCATION_NOTICE.length;
-  const cut = body.lastIndexOf('\n', budget);
-  return `${body.slice(0, cut > MARKER.length ? cut : budget)}${TRUNCATION_NOTICE}`;
+  const cut = markdown.lastIndexOf('\n', budget - MARKER.length - 1);
+  return `${MARKER}${TRUNCATION_NOTICE}\n\n${markdown.slice(0, cut > 0 ? cut : budget - MARKER.length - 2)}`;
 }
 
 class GitHubError extends NoriError {
@@ -72,14 +74,16 @@ async function call({
 
 const hasNextPage = (link: string | null) => link === null || /rel="next"/.test(link);
 
+// Anyone can write a comment that starts with the marker, so a bot's (the Actions token's) wins over a person's.
 async function findComment(target: CommentTarget, issuePath: string): Promise<number | undefined> {
+  const marked: z.infer<typeof CommentPageSchema> = [];
   for (let page = 1; ; page++) {
     const response = await call({ target, method: 'GET', path: `${issuePath}?per_page=${PAGE_SIZE}&page=${page}` });
     const comments = CommentPageSchema.parse(await response.json());
-    const found = comments.find(({ body }) => body?.startsWith(MARKER));
-    if (found !== undefined) return found.id;
-    if (comments.length < PAGE_SIZE || !hasNextPage(response.headers.get('link'))) return undefined;
+    marked.push(...comments.filter(({ body }) => body?.startsWith(MARKER)));
+    if (comments.length < PAGE_SIZE || !hasNextPage(response.headers.get('link'))) break;
   }
+  return (marked.find(({ user }) => user?.type === 'Bot') ?? marked[0])?.id;
 }
 
 export async function postComment({
@@ -93,12 +97,18 @@ export async function postComment({
   const issuePath = `${repo}/issues/${target.pullNumber}/comments`;
   const body = commentBody(markdown);
   const existing = await findComment(target, issuePath);
+  const create = async (): Promise<CommentOutcome> => {
+    const created = await call({ target, method: 'POST', path: issuePath, body });
+    return { kind: 'created', id: CommentIdSchema.parse(await created.json()).id };
+  };
   try {
-    if (existing === undefined) {
-      const created = await call({ target, method: 'POST', path: issuePath, body });
-      return { kind: 'created', id: CommentIdSchema.parse(await created.json()).id };
+    if (existing === undefined) return await create();
+    try {
+      await call({ target, method: 'PATCH', path: `${repo}/issues/comments/${existing}`, body });
+    } catch (error) {
+      if (error instanceof GitHubError && error.status === 403) return await create();
+      throw error;
     }
-    await call({ target, method: 'PATCH', path: `${repo}/issues/comments/${existing}`, body });
     return { kind: 'updated', id: existing };
   } catch (error) {
     if (error instanceof GitHubError && error.status === 403) return { kind: 'skipped-read-only', status: error.status };
