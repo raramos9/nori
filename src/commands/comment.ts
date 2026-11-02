@@ -23,9 +23,11 @@ export type CommentOutcome =
 
 const EventSchema = z.object({ pull_request: z.object({ number: z.number().int().positive() }) });
 const CommentPageSchema = z.array(
-  z.object({ id: z.number().int(), body: z.string().nullish(), user: z.object({ type: z.string() }).nullish() }),
+  z.object({ id: z.number().int(), body: z.string().nullish(), user: z.object({ login: z.string() }).nullish() }),
 );
 const CommentIdSchema = z.object({ id: z.number().int() });
+const UserSchema = z.object({ login: z.string() });
+const ACTIONS_BOT = 'github-actions[bot]';
 const RepositorySchema = z.string().regex(/^[\w.-]+\/[\w.-]+$/);
 
 export function commentBody(markdown: string): string {
@@ -74,16 +76,26 @@ async function call({
 
 const hasNextPage = (link: string | null) => link === null || /rel="next"/.test(link);
 
-// Anyone can write a comment that starts with the marker, so a bot's (the Actions token's) wins over a person's.
+// The default Actions token cannot read /user; a personal or app-user token can, and may write as someone else.
+async function ownLogin(target: CommentTarget): Promise<string> {
+  try {
+    return UserSchema.parse(await (await call({ target, method: 'GET', path: '/user' })).json()).login;
+  } catch (error) {
+    if (error instanceof GitHubError && (error.status === 403 || error.status === 401)) return ACTIONS_BOT;
+    throw error;
+  }
+}
+
+// Anyone can post a comment that starts with the marker, and a write token can edit theirs, so only our own counts.
 async function findComment(target: CommentTarget, issuePath: string): Promise<number | undefined> {
-  const marked: z.infer<typeof CommentPageSchema> = [];
+  const login = await ownLogin(target);
   for (let page = 1; ; page++) {
     const response = await call({ target, method: 'GET', path: `${issuePath}?per_page=${PAGE_SIZE}&page=${page}` });
     const comments = CommentPageSchema.parse(await response.json());
-    marked.push(...comments.filter(({ body }) => body?.startsWith(MARKER)));
-    if (comments.length < PAGE_SIZE || !hasNextPage(response.headers.get('link'))) break;
+    const found = comments.find(({ body, user }) => body?.startsWith(MARKER) && user?.login === login);
+    if (found !== undefined) return found.id;
+    if (comments.length < PAGE_SIZE || !hasNextPage(response.headers.get('link'))) return undefined;
   }
-  return (marked.find(({ user }) => user?.type === 'Bot') ?? marked[0])?.id;
 }
 
 export async function postComment({
@@ -103,12 +115,7 @@ export async function postComment({
   };
   try {
     if (existing === undefined) return await create();
-    try {
-      await call({ target, method: 'PATCH', path: `${repo}/issues/comments/${existing}`, body });
-    } catch (error) {
-      if (error instanceof GitHubError && error.status === 403) return await create();
-      throw error;
-    }
+    await call({ target, method: 'PATCH', path: `${repo}/issues/comments/${existing}`, body });
     return { kind: 'updated', id: existing };
   } catch (error) {
     if (error instanceof GitHubError && error.status === 403) return { kind: 'skipped-read-only', status: error.status };

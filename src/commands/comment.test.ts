@@ -9,7 +9,7 @@ import { NoriError } from '../errors.js';
 import { COMMENT_LIMIT, MARKER, runComment } from './comment.js';
 
 type Recorded = { method: string; url: string; authorization: string | undefined; body: string };
-type StoredComment = { id: number; body: string; user?: { type: string } };
+type StoredComment = { id: number; body: string; user?: { login: string } };
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const TOKEN = 'ghs_testtoken';
@@ -28,6 +28,7 @@ type Fake = {
   readonly requests: Recorded[];
   readonly comments: StoredComment[];
   failWrites: number | undefined;
+  login: string | undefined;
   close: () => Promise<void>;
 };
 
@@ -39,6 +40,7 @@ async function startFake(): Promise<Fake> {
     requests,
     comments,
     failWrites: undefined,
+    login: undefined,
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
   const server: Server = createServer(async (request, response) => {
@@ -50,24 +52,26 @@ async function startFake(): Promise<Fake> {
       response.end(JSON.stringify(payload));
     };
     if (request.method !== 'GET' && fake.failWrites !== undefined) return send(fake.failWrites, { message: 'nope' });
+    if (request.method === 'GET' && url.pathname === '/user') {
+      return fake.login === undefined ? send(403, { message: 'Resource not accessible by integration' }) : send(200, { login: fake.login });
+    }
     const list = url.pathname.match(/^\/repos\/octo\/app\/issues\/7\/comments$/);
     const one = url.pathname.match(/^\/repos\/octo\/app\/issues\/comments\/(\d+)$/);
     if (request.method === 'GET' && list) {
       const perPage = Number(url.searchParams.get('per_page'));
       const page = Number(url.searchParams.get('page'));
-      const slice = comments.slice((page - 1) * perPage, page * perPage).map((comment) => ({ user: { type: 'User' }, ...comment }));
+      const slice = comments.slice((page - 1) * perPage, page * perPage).map((comment) => ({ user: { login: 'someone' }, ...comment }));
       const more = page * perPage < comments.length;
       return send(200, slice, more ? { Link: `<http://fake/next>; rel="next"` } : { Link: `<http://fake/first>; rel="first"` });
     }
     if (request.method === 'POST' && list) {
-      const created = { id: 1000 + comments.length, body: (JSON.parse(body) as { body: string }).body, user: { type: 'Bot' } };
+      const created = { id: 1000 + comments.length, body: (JSON.parse(body) as { body: string }).body, user: { login: 'github-actions[bot]' } };
       comments.push(created);
       return send(201, created);
     }
     if (request.method === 'PATCH' && one) {
       const found = comments.find(({ id }) => id === Number(one[1]));
       if (found === undefined) return send(404, { message: 'missing' });
-      if (found.user?.type !== 'Bot') return send(403, { message: 'not yours' });
       found.body = (JSON.parse(body) as { body: string }).body;
       return send(200, found);
     }
@@ -121,7 +125,7 @@ describe('nori comment', () => {
     await post('first diff');
     const [created] = fake.comments;
     expect(await post('second diff')).toBe(0);
-    expect(fake.comments).toEqual([{ id: created!.id, body: `${MARKER}\nsecond diff`, user: { type: 'Bot' } }]);
+    expect(fake.comments).toEqual([{ id: created!.id, body: `${MARKER}\nsecond diff`, user: { login: 'github-actions[bot]' } }]);
     expect(writes().map(({ method, url }) => `${method} ${url}`)).toEqual([
       'POST /repos/octo/app/issues/7/comments',
       `PATCH /repos/octo/app/issues/comments/${created!.id}`,
@@ -130,12 +134,13 @@ describe('nori comment', () => {
 
   it('finds the marker comment on a later page and leaves other comments alone', async () => {
     for (let i = 0; i < 100; i++) fake.comments.push({ id: i + 1, body: `chatter ${i}` });
-    fake.comments.push({ id: 500, body: `${MARKER}\nold`, user: { type: 'Bot' } });
+    fake.comments.push({ id: 500, body: `${MARKER}\nold`, user: { login: 'github-actions[bot]' } });
     expect(await post('new')).toBe(0);
     expect(writes().map(({ method, url }) => `${method} ${url}`)).toEqual(['PATCH /repos/octo/app/issues/comments/500']);
     expect(fake.comments).toHaveLength(101);
     const pages = fake.requests.filter(({ method }) => method === 'GET').map(({ url }) => url);
     expect(pages).toEqual([
+      '/user',
       '/repos/octo/app/issues/7/comments?per_page=100&page=1',
       '/repos/octo/app/issues/7/comments?per_page=100&page=2',
     ]);
@@ -164,20 +169,25 @@ describe('nori comment', () => {
 
   it("edits the bot's marker comment, not a person's comment that copies the marker", async () => {
     fake.comments.push({ id: 1, body: `${MARKER}\nsquatted` });
-    fake.comments.push({ id: 2, body: `${MARKER}\nold`, user: { type: 'Bot' } });
+    fake.comments.push({ id: 2, body: `${MARKER}\nold`, user: { login: 'github-actions[bot]' } });
     expect(await post('new')).toBe(0);
     expect(writes().map(({ method, url }) => `${method} ${url}`)).toEqual(['PATCH /repos/octo/app/issues/comments/2']);
     expect(fake.comments[0]!.body).toBe(`${MARKER}\nsquatted`);
   });
 
-  it("creates its own comment when the only marker comment is a person's", async () => {
+  it("creates its own comment and leaves a person's marker comment untouched", async () => {
     fake.comments.push({ id: 1, body: `${MARKER}\nsquatted` });
     expect(await post('new')).toBe(0);
-    expect(writes().map(({ method, url }) => `${method} ${url}`)).toEqual([
-      'PATCH /repos/octo/app/issues/comments/1',
-      'POST /repos/octo/app/issues/7/comments',
-    ]);
+    expect(writes().map(({ method, url }) => `${method} ${url}`)).toEqual(['POST /repos/octo/app/issues/7/comments']);
     expect(fake.comments.map(({ body }) => body)).toEqual([`${MARKER}\nsquatted`, `${MARKER}\nnew`]);
+  });
+
+  it("edits the comment of a personal token's own user", async () => {
+    fake.login = 'andre';
+    fake.comments.push({ id: 1, body: `${MARKER}\nsquatted` });
+    fake.comments.push({ id: 2, body: `${MARKER}\nold`, user: { login: 'andre' } });
+    expect(await post('new')).toBe(0);
+    expect(writes().map(({ method, url }) => `${method} ${url}`)).toEqual(['PATCH /repos/octo/app/issues/comments/2']);
   });
 
   it('sends the token to the fake origin only', async () => {
@@ -186,7 +196,7 @@ describe('nori comment', () => {
     expect(fake.requests.length).toBeGreaterThan(0);
     for (const request of fake.requests) {
       expect(request.authorization).toBe(`Bearer ${TOKEN}`);
-      expect(request.url.startsWith('/repos/octo/app/issues')).toBe(true);
+      expect(request.url === '/user' || request.url.startsWith('/repos/octo/app/issues')).toBe(true);
     }
   });
 
