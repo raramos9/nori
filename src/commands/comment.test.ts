@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NoriError } from '../errors.js';
-import { COMMENT_LIMIT, MARKER, runComment } from './comment.js';
+import { COMMENT_LIMIT, MARKER, commentBody, runComment } from './comment.js';
 
 type Recorded = { method: string; url: string; authorization: string | undefined; body: string };
 type StoredComment = { id: number; body: string; user?: { login: string } };
@@ -165,6 +165,12 @@ describe('nori comment', () => {
     expect(stored!.body.startsWith(`${MARKER}\n\n_The diff was cut`)).toBe(true);
     expect(stored!.body).toMatch(/\| added \| `screen \/r\d+` \|$/);
     expect(stored!.body).not.toMatch(/\| added \| `screen \/r\d*$/m);
+  });
+
+  it('fills the limit exactly when the cut lands on its last character', () => {
+    const room = COMMENT_LIMIT - commentBody('x'.repeat(COMMENT_LIMIT)).indexOf('x');
+    expect(commentBody(`${'x'.repeat(room)}\n${'y'.repeat(COMMENT_LIMIT)}`)).toHaveLength(COMMENT_LIMIT);
+    expect(commentBody('z'.repeat(COMMENT_LIMIT * 2))).toHaveLength(COMMENT_LIMIT);
   });
 
   it("edits the bot's marker comment, not a person's comment that copies the marker", async () => {

@@ -33,9 +33,10 @@ const RepositorySchema = z.string().regex(/^[\w.-]+\/[\w.-]+$/);
 export function commentBody(markdown: string): string {
   const body = `${MARKER}\n${markdown}`;
   if (body.length <= COMMENT_LIMIT) return body;
-  const budget = COMMENT_LIMIT - TRUNCATION_NOTICE.length;
-  const cut = markdown.lastIndexOf('\n', budget - MARKER.length - 1);
-  return `${MARKER}${TRUNCATION_NOTICE}\n\n${markdown.slice(0, cut > 0 ? cut : budget - MARKER.length - 2)}`;
+  const head = `${MARKER}${TRUNCATION_NOTICE}\n\n`;
+  const room = COMMENT_LIMIT - head.length;
+  const cut = markdown.lastIndexOf('\n', room);
+  return `${head}${markdown.slice(0, cut > 0 ? cut : room)}`;
 }
 
 class GitHubError extends NoriError {
