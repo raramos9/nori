@@ -1,9 +1,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { comparable, diffBuilds } from '../graph/diff.js';
+import { screenshotDigest } from '../runtime/screenshot-digest.js';
 import { readVersion } from '../version.js';
 import { readSnippet } from '../explorer/source.js';
 import type { ExplorerTransition } from '../explorer/view.js';
+import { diffOutputSchema, listOutputSchema, resolveAnalyses, trimDiff, type BuildStore } from './builds.js';
 import type { Served } from './live.js';
 import { primaryScreenshot, type GraphIndex } from './snapshot.js';
 
@@ -84,7 +87,15 @@ function toolError(message: string): CallToolResult {
   return { isError: true, content: [{ type: 'text', text: message }] };
 }
 
-export function createMcpServer({ current, realRoot }: { current: () => Promise<Served>; realRoot: string }): McpServer {
+export function createMcpServer({
+  current,
+  realRoot,
+  builds,
+}: {
+  current: () => Promise<Served>;
+  realRoot: string;
+  builds: BuildStore;
+}): McpServer {
   const routeOf = (index: GraphIndex, id: string): string => index.screens.get(id)?.route ?? '';
   const describe = (transition: ExplorerTransition) => ({
     id: transition.id,
@@ -222,6 +233,92 @@ export function createMcpServer({ current, realRoot }: { current: () => Promise<
         startLine: snippet.startLine,
         lines: snippet.lines,
       });
+    },
+  );
+
+  server.registerTool(
+    'list_builds',
+    {
+      description:
+        "List the snapshots nori has analysed for this app, newest first: commit, branch, how many crawl runs each has, and the analyses (with analyzer version) read from it. Two snapshots compare only if one analyzer version read both; servedAnalyzerVersion and each analysis's served flag show the version this server runs. Pass two snapshotId values to diff_builds to see what changed between them.",
+      annotations: READ_ONLY,
+      outputSchema: listOutputSchema,
+    },
+    async () => {
+      const served = (await current()).snapshot.graph.build;
+      return respond({
+        servedAnalyzerVersion: served.analyzerVersion,
+        servedAnalysisId: served.id,
+        builds: (await builds.list()).map(({ snapshot, analyses, runCount }) => ({
+          snapshotId: snapshot.id,
+          commitSha: snapshot.commitSha,
+          branch: snapshot.branch,
+          worktree: snapshot.worktree,
+          sourceHash: snapshot.sourceHash,
+          createdAt: snapshot.createdAt.toISOString(),
+          runCount,
+          analyses: analyses.map((analysis) => ({
+            id: analysis.id,
+            analyzerVersion: analysis.analyzerVersion,
+            createdAt: analysis.createdAt.toISOString(),
+            served: analysis.analyzerVersion === served.analyzerVersion,
+          })),
+        })),
+      });
+    },
+  );
+
+  server.registerTool(
+    'diff_builds',
+    {
+      description:
+        'Compare the behavioral map of two snapshots from list_builds: screens and transitions added or removed, evidence that appeared or disappeared, and crawled pages whose screenshot differs. Reads the analyses of the newest analyzer version both snapshots share. Reports facts about two builds and never says which commit caused a change. gaps are things seen on one side that the other side could not have seen, so they are not changes.',
+      annotations: READ_ONLY,
+      inputSchema: {
+        base: z.string().describe('Snapshot id from list_builds: the older side'),
+        head: z.string().describe('Snapshot id from list_builds: the newer side'),
+      },
+      outputSchema: diffOutputSchema,
+    },
+    async ({ base, head }) => {
+      const resolution = resolveAnalyses({
+        builds: await builds.list(),
+        base,
+        head,
+        served: (await current()).snapshot.graph.build.analyzerVersion,
+      });
+      switch (resolution.kind) {
+        case 'unknown-snapshot':
+          return toolError(`No snapshot with id ${JSON.stringify(resolution.id)} (${resolution.side}); take ids from list_builds`);
+        case 'no-shared-analyzer':
+          return toolError(
+            `No analyzer version read both snapshots: base has ${resolution.base.join(', ')}, head has ${resolution.head.join(', ')}. Run nori diff <base> <head> to re-analyse both commits.`,
+          );
+        case 'resolved': {
+          const baseGraph = await builds.load(resolution.base.id);
+          const headGraph = await builds.load(resolution.head.id);
+          if (baseGraph === null || headGraph === null) {
+            return toolError(`Analysis ${(baseGraph === null ? resolution.base : resolution.head).id} is no longer in the store`);
+          }
+          const pair = comparable(baseGraph, headGraph);
+          switch (pair.kind) {
+            case 'comparable':
+              return respond(trimDiff(diffBuilds(pair.pair, { screenshotDigest })));
+            case 'different-apps':
+              return toolError(`base and head are different apps: ${pair.base.id} and ${pair.head.id}`);
+            case 'different-analyzers':
+              return toolError(`base and head were read by different analyzers: ${pair.base} and ${pair.head}`);
+            default: {
+              const _exhaustive: never = pair;
+              return _exhaustive;
+            }
+          }
+        }
+        default: {
+          const _exhaustive: never = resolution;
+          return _exhaustive;
+        }
+      }
     },
   );
 
