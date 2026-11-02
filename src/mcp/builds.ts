@@ -24,7 +24,6 @@ const versionsOf = (analyses: readonly Analysis[]): AnalyzerVersion[] => [
   ...new Set([...analyses].sort(newestFirst).map(({ analyzerVersion }) => analyzerVersion)),
 ];
 
-// Prefers the version the server runs now, else the shared version analysed most recently.
 export function resolveAnalyses({
   builds,
   base,
