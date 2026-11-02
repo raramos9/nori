@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,9 +13,10 @@ import {
   type Subject,
 } from '../graph/diff.js';
 import { sessionKey } from '../graph/ids.js';
-import type { ArtifactPath, BuildGraph, CommitSha } from '../graph/model.js';
+import type { BuildGraph, CommitSha } from '../graph/model.js';
 import { resolveRoot } from '../next/project.js';
 import { addDetachedWorktree, removeWorktree, resolveCommit, showPrefix } from '../repo/git.js';
+import { screenshotDigest } from '../runtime/screenshot-digest.js';
 import type { Command } from './command.js';
 import { scan } from './scan.js';
 
@@ -58,8 +57,6 @@ async function scanCommit({
     await rm(dir, { recursive: true, force: true });
   }
 }
-
-const screenshotDigest = (path: ArtifactPath): string => createHash('sha256').update(readFileSync(path)).digest('hex');
 
 export async function diffCommits({ root, prefix, base, head }: DiffRequest): Promise<BuildDiff> {
   const baseGraph = await scanCommit({ root, prefix, commitSha: base.commitSha });
