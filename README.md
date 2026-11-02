@@ -108,7 +108,7 @@ The server re-analyses when the source changes, so the agent always sees the cur
 
 - A screen or transition starts as `inferred`. Static analysis proposed it and nothing has confirmed it yet. A crawl moves it to `observed` or `failed`.
 - Roughly a third of internal navigation stays unresolved. Common causes are a target computed at runtime, such as `router.push(next)`, or a link built from data. Each unresolved call keeps its source expression, so you can see why.
-- On six open-source apps that were held out from tuning, 61.6% of internal navigation calls resolve to a screen. `bench/` has the benchmark and how to rerun it.
+- On six open-source apps that were held out from tuning, 61.8% of internal navigation calls resolve to a screen. `bench/` has the benchmark and how to rerun it.
 - A link inside a shared layout or component counts as navigation from every screen that renders it.
 - A diff says what changed, not which commit caused a failure. nori makes no causal claims.
 - nori keeps its state under `~/.nori/stores/<app key>/` (override with `NORI_HOME`), including the database and every crawl's screenshots. It writes nothing into the analysed project. Two checkouts of one repository share a store, so a diff can compare builds made in different directories.
