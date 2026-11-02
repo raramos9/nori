@@ -107,7 +107,7 @@ describe('nori diff CLI', () => {
   it('prints the markdown table', () => {
     const result = runCli('diff', history.base, history.head, history.root, '--markdown');
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain(`### nori diff ${history.base} → ${history.head}`);
+    expect(result.stdout).toContain(`### nori diff ${history.base.slice(0, 7)} → ${history.head.slice(0, 7)}`);
     expect(result.stdout).toContain('| Change | Subject |');
     expect(result.stdout).toContain('| added | `screen /changelog` |');
   }, SLOW);

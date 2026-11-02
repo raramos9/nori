@@ -233,9 +233,11 @@ function codeSpan(text: string): string {
 const cell = (text: string) => text.replace(/\|/g, '\\|');
 const subjectCell = (subject: Subject) => cell(codeSpan(subjectText(subject)));
 
+const shortRef = (ref: string) => (/^[0-9a-f]{40}$/.test(ref) ? ref.slice(0, 7) : ref);
+
 export function formatDiffMarkdown({ diff, refs }: { diff: BuildDiff; refs: Refs }): string {
   const lines = [
-    `### nori diff ${refs.base} → ${refs.head}`,
+    `### nori diff ${shortRef(refs.base)} → ${shortRef(refs.head)}`,
     '',
     `App ${codeSpan(diff.appKey)}, analyzer ${codeSpan(diff.analyzerVersion)}, ` +
       `base ${plural(diff.base.runs.length, 'run')}, head ${plural(diff.head.runs.length, 'run')}.`,
