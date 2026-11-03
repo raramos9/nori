@@ -291,4 +291,20 @@ describe('navigationIngestion', () => {
       [{ source: null, classification: { kind: 'resolved' } }],
     ]);
   });
+
+  it('does not credit a sidebar link to a screen its pathname guard rules out', () => {
+    const sidebar =
+      "import { usePathname, useParams } from 'next/navigation';\n" +
+      'export function Sidebar() {\n  const pathname = usePathname();\n  const { slug } = useParams();\n' +
+      "  return pathname.startsWith(`/${slug}/links`) && <Link href='/' />;\n}\n";
+    expect(
+      edges({
+        'app/[s]/layout.tsx': "import { Sidebar } from '../../components/sidebar';\nexport default Sidebar;\n",
+        'components/sidebar.tsx': sidebar,
+        'app/page.tsx': PAGE,
+        'app/[s]/links/page.tsx': PAGE,
+        'app/[s]/settings/page.tsx': PAGE,
+      }),
+    ).toEqual(['/[s]/links link /']);
+  });
 });
